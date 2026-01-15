@@ -6,7 +6,7 @@ from sqlalchemy import create_engine, text
 # PAGE
 # =========================
 st.set_page_config(page_title="ZCORIN Converter", layout="wide")
-st.title("ZCORIN Converter (NeonDB)")
+st.title("ZCORIN Converter")
 
 # =========================
 # DB CONNECTION (cached)
@@ -155,32 +155,17 @@ def get_existing_materials_set() -> set:
         rows = conn.execute(text("SELECT material FROM zcorin_converter")).fetchall()
     return set(r[0] for r in rows if r and r[0] is not None)
 
-# =========================
-# TOP ACTIONS
-# =========================
-a1, a2 = st.columns([1, 3])
-with a1:
-    if st.button("🔄 Refresh Data"):
-        st.rerun()
-with a2:
-    st.caption("Tip: Setelah update/insert/bulk, app akan auto-refresh untuk menampilkan data terbaru.")
+st.subheader("Search Material")
 
-st.markdown("---")
-
-# =========================
-# 1) SEARCH + EDIT / ADD
-# =========================
-st.subheader("1) Search Material → Edit / Add")
-
-search_material = st.text_input("Cari Material", placeholder="Contoh: 1234567").strip()
+search_material = st.text_input("Type your material code", placeholder="Contoh: 1234567").strip()
 
 if search_material:
     row = get_row_by_material(search_material)
 
     if row is None:
-        st.warning("Material tidak ditemukan. Silakan tambah data baru di bawah ini.")
+        st.warning("Material not found. Please add new data below.")
         with st.form("add_new"):
-            # material locked (diisi dari search)
+            # material locked (filled from search)
             st.text_input("Material *", value=search_material, disabled=True)
 
             c1, c2 = st.columns(2)
@@ -284,14 +269,10 @@ if search_material:
                 except Exception as e:
                     st.error(f"Gagal update: {e}")
 
-st.markdown("---")
 
-# =========================
-# 2) BULK UPLOAD (SKIP DUPLICATES)
-# =========================
-st.subheader("2) Bulk Upload Excel (Skip duplicates)")
+st.subheader("Bulk Upload Excel")
 
-uploaded = st.file_uploader("Upload Master Data FG (.xlsx)", type=["xlsx"])
+uploaded = st.file_uploader("Upload your Master Data(.xlsx)", type=["xlsx"])
 
 if uploaded:
     try:
@@ -332,7 +313,7 @@ if uploaded:
     except Exception as e:
         st.error(f"Gagal memproses file: {e}")
 else:
-    st.caption("Upload file Excel untuk bulk upload.")
+    st.caption("Upload Excel file for bulk upload.")
 
 st.markdown("---")
 

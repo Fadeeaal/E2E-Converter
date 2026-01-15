@@ -3,7 +3,7 @@ import streamlit as st
 from sqlalchemy import create_engine, text
 
 st.set_page_config(page_title="Calendar Loader", layout="wide")
-st.title("📅 Calendar Loader (NeonDB)")
+st.title("Calendar Loader")
 
 # =========================
 # DB CONNECTION
@@ -60,7 +60,7 @@ def load_excel(uploaded_file) -> pd.DataFrame:
     needed = {"Date", "Week"}
     missing = needed - set(df.columns)
     if missing:
-        raise ValueError(f"Kolom tidak ditemukan di Excel: {sorted(list(missing))}")
+        raise ValueError(f"Missing columns in Excel: {sorted(list(missing))}")
 
     # Keep only Date + Week (ignore Day)
     df = df[["Date", "Week"]].copy()
@@ -97,51 +97,39 @@ def upsert_calendar(df: pd.DataFrame):
 # =========================
 ensure_table()
 
-# =========================
-# SIDEBAR ACTIONS
-# =========================
-st.sidebar.header("Actions")
-st.sidebar.caption(f"Table: `{TABLE_NAME}`")
-
-if st.sidebar.button("🔄 Refresh"):
-    st.rerun()
-
-st.sidebar.markdown("---")
 st.sidebar.subheader("⚠️ Danger Zone")
 
-confirm = st.sidebar.checkbox("Saya yakin ingin menghapus semua isi tabel (TRUNCATE).")
-if st.sidebar.button("🧨 TRUNCATE (hapus semua data)") and confirm:
+confirm = st.sidebar.checkbox("Yes, I want to delete all data (TRUNCATE).")
+if st.sidebar.button("TRUNCATE (clear all data)") and confirm:
     truncate_table()
-    st.sidebar.success("Table berhasil dikosongkan.")
+    st.sidebar.success("Table cleared.")
     st.rerun()
 
 # =========================
 # MAIN
 # =========================
-total = count_rows()
-st.metric("Rows in DB", f"{total:,}")
 
-st.subheader("Preview data di DB")
+st.subheader("Preview Data in DB")
 st.dataframe(fetch_preview(50), use_container_width=True)
 
 st.markdown("---")
 
 st.subheader("Bulk Upload Calendar Excel")
-uploaded = st.file_uploader("Upload Calendar CS (.xlsx)", type=["xlsx"])
+uploaded = st.file_uploader("Upload Calendar (.xlsx)", type=["xlsx"])
 
 if uploaded:
     try:
         df_up = load_excel(uploaded)
-        st.success(f"File terbaca: {len(df_up):,} baris valid (Date+Week).")
+        st.success(f"File loaded: {len(df_up):,} valid rows (Date+Week).")
         st.dataframe(df_up.head(30), use_container_width=True)
 
         if st.button("⬆️ Upload to DB (Upsert)"):
             with st.spinner("Uploading..."):
                 upsert_calendar(df_up)
-            st.success("Upload selesai. Data sudah masuk DB.")
+            st.success("Upload complete.")
             st.rerun()
 
     except Exception as e:
-        st.error(f"Gagal memproses file: {e}")
+        st.error(f"Failed to process file: {e}")
 else:
-    st.caption("Upload file untuk mulai. Kolom yang dipakai hanya `Date` dan `Week` (Day diabaikan).")
+    st.caption("Upload your file first.")

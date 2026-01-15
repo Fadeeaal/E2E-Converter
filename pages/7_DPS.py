@@ -3,8 +3,25 @@ import pandas as pd
 import streamlit as st
 from sqlalchemy import create_engine, text
 
-st.set_page_config(page_title="Fulfilment Extractor", layout="wide")
-st.title("Fulfilment Extractor (A:H + O:P + Release + DB Enrichment)")
+st.set_page_config(page_title="DPS Cleaner Data", layout="wide")
+st.title("DPS Cleaner Data")
+
+# =========================
+# USER INPUT: M0 MONTH
+# =========================
+c1, c2, c3 = st.columns(3)
+with c1:
+    m0 = st.number_input("M0 Month (1-12)", min_value=1, max_value=12, value=2, step=1)
+with c2:
+    m1 = ((m0 - 1 + 1) % 12) + 1
+    st.text_input("M1", value=str(m1), disabled=True)
+with c3:
+    m2 = ((m0 - 1 + 2) % 12) + 1
+    st.text_input("M2", value=str(m2), disabled=True)
+
+MONTH_SET = {int(m0), int(m1), int(m2)}
+
+st.markdown("---")
 
 # =========================
 # DB (Neon) - reuse secrets.toml
@@ -108,17 +125,13 @@ def detect_material_col(out: pd.DataFrame) -> str:
     if "sap" in col_map:
         return col_map["sap"]
 
-    # fallback: column B (index 1) if exists
     return cols[1] if len(cols) > 1 else cols[0]
 
 def enrich_from_db(out: pd.DataFrame) -> pd.DataFrame:
     """Add enrichment cols from zcorin_converter by material."""
     material_col = detect_material_col(out)
-
-    # normalize material values
     keys = out[material_col].astype(str).str.strip()
 
-    # prepare new columns
     enrich_cols = ["country", "brand", "big_category", "house", "pack_format", "machine_1"]
     for c in enrich_cols:
         out[c] = keys.map(lambda k: ZCORIN_MAP.get(k, {}).get(c))
@@ -130,18 +143,36 @@ def round_FGH(out: pd.DataFrame) -> pd.DataFrame:
     Round columns F,G,H from original excel selection A:H.
     In our selected out (A:H + O:P), FGH correspond to indices 5,6,7.
     """
-    # indices 5,6,7 must exist (they do if A:H selected)
     for idx in [5, 6, 7]:
         if idx < out.shape[1]:
             col = out.columns[idx]
             out[col] = pd.to_numeric(out[col], errors="coerce").round(0)
     return out
 
-def process_sheet(excel_file, sheet_name: str):
+def filter_by_m0_m2(out: pd.DataFrame, month_set: set) -> pd.DataFrame:
+    """
+    Keep rows where Time_Finish month is in M0-M2 (based on parsed datetime).
+    Assumption: out includes O:P (Time Start, Time_Finish) as last two cols.
+    """
+    time_start_col = out.columns[-2]   # O
+    time_finish_col = out.columns[-1]  # P
+
+    out[time_start_col] = pd.to_datetime(out[time_start_col], errors="coerce")
+    out[time_finish_col] = pd.to_datetime(out[time_finish_col], errors="coerce")
+
+    # keep only months M0-M2
+    out = out[out[time_finish_col].dt.month.isin(month_set)].copy()
+
+    # sort by Time Start
+    out = out.sort_values(by=time_start_col, ascending=True)
+
+    return out
+
+def process_sheet(excel_file, sheet_name: str, month_set: set):
     if not sheet_has_line_header(excel_file, sheet_name):
         return None, "SKIP (no 'Line' header found)"
 
-    # Row 1 is header => header=0
+    # Row 1 header => header=0
     df = pd.read_excel(excel_file, sheet_name=sheet_name, header=0, engine="openpyxl")
 
     # Need at least up to column P (16 cols)
@@ -160,11 +191,14 @@ def process_sheet(excel_file, sheet_name: str):
     # Round F,G,H
     out = round_FGH(out)
 
-    # Time_Finish is last selected (P)
-    time_finish_col = out.columns[-1]
-    out[time_finish_col] = pd.to_datetime(out[time_finish_col], errors="coerce")
+    # Filter rows by M0-M2 (based on Time_Finish), then sort by Time Start
+    out = filter_by_m0_m2(out, month_set)
 
-    # Release time/date + week
+    if out.empty:
+        return None, "SKIP (no rows in selected months M0-M2)"
+
+    # Release time/date + week (requires Time_Finish parsed)
+    time_finish_col = out.columns[-1]
     release_ts = out[time_finish_col].apply(calc_release_time)
     out["Release time"] = pd.to_datetime(release_ts, errors="coerce").dt.date
     out["Release wk"] = out["Release time"].map(CAL_MAP)
@@ -179,16 +213,8 @@ def process_sheet(excel_file, sheet_name: str):
 # =========================
 uploaded = st.file_uploader("Upload Excel (.xlsx)", type=["xlsx"])
 
-# c1, c2, c3 = st.columns(3)
-# with c1:
-#     st.text_input("Columns taken", value="A:H and O:P", disabled=True)
-# with c2:
-#     st.text_input("Rounded", value="F, G, H", disabled=True)
-# with c3:
-#     st.text_input("Enrichment", value="country, brand, big_category, house, pack_format, machine_1", disabled=True)
-
 if not uploaded:
-    st.info("Upload file dulu untuk mulai.")
+    st.info("Upload your file first.")
     st.stop()
 
 if st.button("Process All Sheets"):
@@ -200,7 +226,7 @@ if st.button("Process All Sheets"):
 
         for sh in xls.sheet_names:
             try:
-                df_out, status = process_sheet(uploaded, sh)
+                df_out, status = process_sheet(uploaded, sh, MONTH_SET)
                 rows = 0 if df_out is None else len(df_out)
                 report.append((sh, status, rows))
                 if df_out is not None and not df_out.empty:
@@ -211,7 +237,7 @@ if st.button("Process All Sheets"):
         rep_df = pd.DataFrame(report, columns=["Sheet", "Status", "Rows"])
 
         if not results:
-            st.error("Tidak ada sheet yang berhasil diproses (semua ter-skip atau error).")
+            st.error("No sheets were successfully processed (all skipped or error).")
             st.dataframe(rep_df, use_container_width=True)
             st.stop()
 
@@ -221,13 +247,16 @@ if st.button("Process All Sheets"):
                 df_out.to_excel(writer, sheet_name=sh, index=False)
         output.seek(0)
 
-    st.success(f"Selesai! Sheet diproses: {len(results)} / {len(xls.sheet_names)}")
-    st.subheader("Report per sheet")
-    st.dataframe(rep_df, use_container_width=True)
+    st.success(f"Done! Sheets processed: {len(results)} / {len(xls.sheet_names)}")
+
+    st.subheader("Preview Data per Sheet")
+    for sh, df_out in results.items():
+        with st.expander(f"📄 {sh} ({len(df_out)} rows)", expanded=False):
+            st.dataframe(df_out, use_container_width=True)
 
     st.download_button(
         "Download Output (Excel)",
         data=output,
-        file_name="Fulfilment_Processed_AH_OP_Release_Enriched.xlsx",
+        file_name="Fulfilment_Processed_Filtered_M0_M2.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )

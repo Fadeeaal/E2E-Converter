@@ -28,7 +28,6 @@ if uploaded:
             # ====== END LOGIC ======
 
         st.success("Selesai!")
-        st.write(f"Unique Material: {result['Material'].nunique()}")
 
         st.markdown("---")
 

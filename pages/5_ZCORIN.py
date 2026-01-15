@@ -7,7 +7,7 @@ from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
 
 st.set_page_config(page_title="ZCORIN Cleaner", layout="wide")
-st.title("ZCORIN Cleaner (with Converter from NeonDB)")
+st.title("ZCORIN Cleaner")
 
 # =========================
 # DB ENGINE (Neon)
@@ -52,18 +52,12 @@ def parse_date_series(s: pd.Series) -> pd.Series:
 uploaded = st.file_uploader("Upload file ZCORIN (.xlsx)", type=["xlsx"])
 start_time = st.date_input("Start Time (manual input user)", value=None)
 
-r1, r2 = st.columns(2)
-with r1:
-    st.text_input("Storage Location filter", value="B = (blank), 1, 6", disabled=True)
-with r2:
-    st.text_input("Unit filter", value="M = PC", disabled=True)
-
 if not uploaded:
-    st.info("Upload file dulu untuk mulai.")
+    st.info("Upload file first to start.")
     st.stop()
 
 if not start_time:
-    st.warning("Isi Start Time dulu (date input).")
+    st.warning("Fill in Start Time first (date input).")
     st.stop()
 
 # =========================
@@ -209,7 +203,7 @@ if st.button("Start process ZCORIN"):
         wb.save(out_bytes)
         out_bytes.seek(0)
 
-    st.success("Selesai! Output sudah ditambah kolom + formula.")
+    st.success("Cleansing Done!")
     st.download_button(
         "Download Output (Excel)",
         data=out_bytes,
