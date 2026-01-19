@@ -159,4 +159,4 @@ if uploaded_files:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 else:
-    st.caption("Upload minimal 1 file SOP, lalu klik Process.")
+    st.caption("Upload minimum 1 SOP file to start the process.")

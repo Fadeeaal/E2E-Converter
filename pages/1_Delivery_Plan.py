@@ -56,4 +56,4 @@ if uploaded:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 else:
-    st.caption("Upload file dulu untuk mulai.")
+    st.caption("Upload your file to start the process.")

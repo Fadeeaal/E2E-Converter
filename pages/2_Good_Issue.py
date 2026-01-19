@@ -49,4 +49,4 @@ if uploaded:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 else:
-    st.caption("Upload 1 file Good Issue, lalu klik Start process.")
+    st.caption("Upload your file to start the process.")
