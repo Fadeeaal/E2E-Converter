@@ -5,8 +5,8 @@ from sqlalchemy import create_engine, text
 # =========================
 # PAGE
 # =========================
-st.set_page_config(page_title="ZCORIN Converter", layout="wide")
-st.title("ZCORIN Converter")
+st.set_page_config(page_title="Master Data (West)", layout="wide")
+st.title("Master Data (West)")
 
 # =========================
 # DB CONNECTION (cached)

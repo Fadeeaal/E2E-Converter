@@ -2,8 +2,8 @@ import io
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="Delivery Plan Extractor", layout="wide")
-st.title("Delivery Plan Extractor")
+st.set_page_config(page_title="Delivery Plan Cleaner", layout="wide")
+st.title("Delivery Plan Cleaner")
 
 uploaded = st.file_uploader("Upload file Excel (.xlsx)", type=["xlsx"])
 
