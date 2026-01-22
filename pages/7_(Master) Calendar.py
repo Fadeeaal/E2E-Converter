@@ -109,7 +109,7 @@ if st.sidebar.button("TRUNCATE (clear all data)") and confirm:
 # MAIN
 # =========================
 
-st.subheader("Preview Data in DB")
+st.subheader("Database Preview")
 st.dataframe(fetch_preview(50), use_container_width=True)
 
 st.markdown("---")

@@ -6,19 +6,17 @@ st.set_page_config(page_title="ROFO Compiler", layout="wide")
 st.title("ROFO Compiler")
 
 uploaded_files = st.file_uploader(
-    "Upload file SOP (.xlsx) - bisa lebih dari 1 file",
+    "Upload file SOP (.xlsx)",
     type=["xlsx"],
     accept_multiple_files=True
 )
 
-# ====== INPUT TAHUN & BULAN ======
 c1, c2 = st.columns(2)
 with c1:
     base_year = st.number_input("Tahun M0", min_value=2000, max_value=2100, value=2025, step=1)
 with c2:
     base_month = st.number_input("Bulan M0 (1-12)", min_value=1, max_value=12, value=10, step=1)
 
-# ====== LOCKED FILTER ======
 FILTER_DISTRIBUTOR = "NATIONAL"
 FILTER_UOM = "CARTON"
 d1, d2 = st.columns(2)
@@ -39,7 +37,6 @@ def add_months(y, m, add):
     return ny, nm
 
 def find_sku_col(df: pd.DataFrame) -> str:
-    # Kita merge hanya dengan SKU Code (1 kolom)
     candidates = ["SKU CODE"]
     for c in candidates:
         if c in df.columns:
@@ -64,7 +61,6 @@ def read_filtered(excel_file, sheet_name: str, year_filter: int) -> pd.DataFrame
     return df
 
 def process_sheet_multi(files, sheet_name: str, base_year: int, base_month: int) -> pd.DataFrame:
-    # 1) Cari base_df dari YEAR=base_year (untuk ambil master SKU + metadata)
     base_df = None
     for f in files:
         try:
@@ -78,7 +74,6 @@ def process_sheet_multi(files, sheet_name: str, base_year: int, base_month: int)
     if base_df is None or base_df.empty:
         return pd.DataFrame()
 
-    # drop kolom yang tidak mau ikut
     drop_cols = [
         "Magnitude PH L1 Code", "Magnitude PH L1 Description",
         "Magnitude PH L2 Code", "Magnitude PH L2 Description",
@@ -88,16 +83,12 @@ def process_sheet_multi(files, sheet_name: str, base_year: int, base_month: int)
     base_df = base_df.drop(columns=drop_cols, errors="ignore")
 
     sku_col = find_sku_col(base_df)
-
-    # meta cols = semua selain Jan-Dec
     meta_cols = [c for c in base_df.columns if c not in month_names]
     out = base_df[meta_cols].copy()
 
-    # init M0..M3
     for i in range(4):
         out[f"M{i}"] = pd.NA
 
-    # 2) Isi M0..M3: tiap M punya target YEAR + target month header
     for i in range(4):
         yi, mi = add_months(base_year, base_month, i)
         month_col = month_names[mi - 1]
@@ -123,7 +114,6 @@ def process_sheet_multi(files, sheet_name: str, base_year: int, base_month: int)
                 out[f"M{i}"] = out[f"M{i}"].combine_first(out[f"M{i}_new"])
                 out = out.drop(columns=[f"M{i}_new"])
 
-        # round
         out[f"M{i}"] = pd.to_numeric(out[f"M{i}"], errors="coerce").round(0).astype("Int64")
 
     return out

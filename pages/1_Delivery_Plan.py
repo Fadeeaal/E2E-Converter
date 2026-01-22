@@ -19,15 +19,13 @@ if uploaded:
             usecols="B:D,BG:BK",
             engine="openpyxl"
         )
-
-        # Filter: buang subheader & summary
+        
         if "Demand Code" in df.columns:
             df = df[df["Demand Code"].notna()].copy()
         if "Description" in df.columns:
             df = df[df["Description"].notna()].copy()
             df["Description"] = df["Description"].astype(str).str.strip()
 
-        # ====== ROUND kolom angka (week1 - total) ======
         non_numeric_cols = {"Demand Code", "Description"}
         numeric_cols = [c for c in df.columns if c not in non_numeric_cols]
 

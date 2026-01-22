@@ -7,38 +7,29 @@ from sqlalchemy import create_engine, text
 st.set_page_config(page_title="DPS Cleaner Data", layout="wide")
 st.title("DPS Cleaner Data")
 
-# =========================
-# REGION SELECTION (WEST / EAST)
-# =========================
-region = st.radio(
-    "Select Region",
-    options=["West", "East"],
-    horizontal=True,
-    help="Choose West for standard DPS processing or East for DPS EAST processing"
-)
-
-st.markdown("---")
-
-# =========================
-# USER INPUT: M0 MONTH
-# =========================
-c1, c2, c3 = st.columns(3)
+c1, c2 = st.columns(2)
 with c1:
-    m0 = st.number_input("M0 Month (1-12)", min_value=1, max_value=12, value=2, step=1)
-with c2:
-    m1 = ((m0 - 1 + 1) % 12) + 1
-    st.text_input("M1", value=str(m1), disabled=True)
-with c3:
-    m2 = ((m0 - 1 + 2) % 12) + 1
-    st.text_input("M2", value=str(m2), disabled=True)
+    region = st.radio(
+        "Select Region",
+        options=["West", "East"],
+        horizontal=True,
+        help="Choose West for standard DPS processing or East for DPS EAST processing"
+    )
 
-MONTH_SET = {int(m0), int(m1), int(m2)}
+with c2:
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        m0 = st.number_input("M0 Month (1-12)", min_value=1, max_value=12, value=2, step=1)
+    with c2:
+        m1 = ((m0 - 1 + 1) % 12) + 1
+        st.text_input("M1", value=str(m1), disabled=True)
+    with c3:
+        m2 = ((m0 - 1 + 2) % 12) + 1
+        st.text_input("M2", value=str(m2), disabled=True)
+
+    MONTH_SET = {int(m0), int(m1), int(m2)}
 
 st.markdown("---")
-
-# =========================
-# DB (Neon) - reuse secrets.toml
-# =========================
 @st.cache_resource
 def get_engine():
     p = st.secrets["postgres"]
@@ -78,9 +69,6 @@ def load_zcorin_map():
 CAL_MAP = load_calendar_map()
 ZCORIN_MAP = load_zcorin_map()
 
-# =========================
-# Helpers
-# =========================
 def norm(x) -> str:
     return str(x).strip().lower()
 
@@ -167,16 +155,12 @@ def filter_by_m0_m2(out: pd.DataFrame, month_set: set) -> pd.DataFrame:
     Keep rows where Time_Finish month is in M0-M2 (based on parsed datetime).
     Assumption: out includes O:P (Time Start, Time_Finish) as last two cols.
     """
-    time_start_col = out.columns[-2]   # O
-    time_finish_col = out.columns[-1]  # P
+    time_start_col = out.columns[-2]
+    time_finish_col = out.columns[-1]  
 
     out[time_start_col] = pd.to_datetime(out[time_start_col], errors="coerce")
     out[time_finish_col] = pd.to_datetime(out[time_finish_col], errors="coerce")
-
-    # keep only months M0-M2
     out = out[out[time_finish_col].dt.month.isin(month_set)].copy()
-
-    # sort by Time Start
     out = out.sort_values(by=time_start_col, ascending=True)
 
     return out
@@ -185,45 +169,29 @@ def process_sheet(excel_file, sheet_name: str, month_set: set):
     if not sheet_has_line_header(excel_file, sheet_name):
         return None, "SKIP (no 'Line' header found)"
 
-    # Row 1 header => header=0
     df = pd.read_excel(excel_file, sheet_name=sheet_name, header=0, engine="openpyxl")
-
-    # Need at least up to column P (16 cols)
     if df.shape[1] < 16:
         return None, "SKIP (not enough columns for A:H + O:P)"
-
-    # Select A:H and O:P
     cols_idx = list(range(0, 8)) + list(range(14, 16))
     out = df.iloc[:, cols_idx].copy()
     out = out.dropna(how="all")
 
-    # Format Line (col A) to Mon-YY
     line_col = out.columns[0]
     out[line_col] = format_line_col_to_mon_yy(out[line_col])
-
-    # Round F,G,H
     out = round_FGH(out)
-
-    # Filter rows by M0-M2 (based on Time_Finish), then sort by Time Start
     out = filter_by_m0_m2(out, month_set)
 
     if out.empty:
         return None, "SKIP (no rows in selected months M0-M2)"
-
-    # Release time/date + week (requires Time_Finish parsed)
     time_finish_col = out.columns[-1]
     release_ts = out[time_finish_col].apply(calc_release_time)
     out["Release time"] = pd.to_datetime(release_ts, errors="coerce").dt.date
     out["Release wk"] = out["Release time"].map(CAL_MAP)
 
-    # Enrich from zcorin_converter
     out = enrich_from_db(out)
 
     return out, "OK"
 
-# =========================
-# EAST REGION CONSTANTS & FUNCTIONS
-# =========================
 DATE_ROW_IDX = 8
 DATE_START_COL = 24   
 DATE_END_COL = 93     
@@ -438,20 +406,12 @@ def create_east_excel_download(line_dfs: dict) -> bytes:
     
     output.seek(0)
     return output.getvalue()
-
-
-# =========================
-# UI
-# =========================
 uploaded = st.file_uploader("Upload Excel (.xlsx)", type=["xlsx"])
 
 if not uploaded:
-    st.info("Upload your file first.")
+    st.caption("Upload your file to start the process.")
     st.stop()
 
-# =========================
-# WEST REGION PROCESSING
-# =========================
 if region == "West":
     if st.button("Process All Sheets"):
         with st.spinner("Processing sheets..."):
@@ -496,13 +456,9 @@ if region == "West":
             file_name="Fulfilment_Processed_Filtered_M0_M2.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
-
-# =========================
-# EAST REGION PROCESSING
-# =========================
-else:  # region == "East"
+        
+else: 
     try:
-        # Step 1: Only detect sheets first (cache to avoid re-reading)
         @st.cache_data
         def get_sheet_names(file_bytes):
             """Cache sheet names to avoid re-reading Excel file"""
@@ -520,17 +476,12 @@ else:  # region == "East"
             options=["-- Select a sheet --"] + sheet_names,
             help="Choose the sheet containing the daily production data"
         )
-        
-        # Check if a valid sheet is selected
+
         sheet_selected = selected_sheet and selected_sheet != "-- Select a sheet --"
-        
-        # Button always visible, but disabled if no sheet selected
-        if st.button("🚀 Start Process", type="primary", disabled=not sheet_selected):
-            # Step 3: Read and validate the selected sheet
+        if st.button("Start Process", type="primary", disabled=not sheet_selected):
             with st.spinner(f"Reading sheet '{selected_sheet}'..."):
                 raw = pd.read_excel(io.BytesIO(file_bytes), sheet_name=selected_sheet, header=None, engine="openpyxl")
             
-            # Validate sheet format
             with st.spinner("Validating sheet format..."):
                 is_valid, error_message = validate_east_sheet_format(raw)
             
@@ -542,8 +493,6 @@ else:  # region == "East"
                         "- Material in column F, Description in column G, Kg/CB in column J")
             else:
                 st.success("✅ Sheet format validated successfully!")
-                
-                # Step 4: Process the file
                 with st.spinner("Processing file..."):
                     try:
                         line_dfs = process_east_file(raw, engine, MONTH_SET, CAL_MAP)

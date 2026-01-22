@@ -320,6 +320,20 @@ st.markdown("---")
 # =========================
 # VIEW EXISTING DATA (optional)
 # =========================
-st.subheader("Database Preview (Latest 5000 rows)")
+st.subheader("Database Preview")
 df_db = load_db(limit=5000)
 st.dataframe(df_db, use_container_width=True)
+
+# =========================
+# SIDEBAR DANGER ZONE
+# =========================
+st.sidebar.subheader("⚠️ Danger Zone")
+confirm = st.sidebar.checkbox("Yes, I want to delete all data (TRUNCATE).")
+if st.sidebar.button("TRUNCATE (clear all data)") and confirm:
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("TRUNCATE TABLE zcorin_converter RESTART IDENTITY CASCADE"))
+        st.sidebar.success("Table cleared.")
+        st.rerun()
+    except Exception as e:
+        st.sidebar.error(f"Failed to truncate table: {e}")

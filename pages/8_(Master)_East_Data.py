@@ -169,11 +169,6 @@ def excel_to_db_df(uploaded) -> pd.DataFrame:
 
     return df
 
-# =========================
-# MODE TOGGLE: ADD vs EDIT
-# =========================
-st.subheader("Single Record Management")
-
 mode = st.radio(
     "Select Mode",
     options=["✏️ Edit Existing", "➕ Add New"],
@@ -187,7 +182,7 @@ st.markdown("---")
 # EDIT MODE
 # =========================
 if mode == "✏️ Edit Existing":
-    st.markdown("### 🔍 Search & Edit")
+    st.markdown("### Search & Edit")
     
     # Get all materials for dropdown
     all_materials = get_all_materials()
@@ -361,8 +356,7 @@ st.markdown("---")
 # =========================
 # BULK UPLOAD (INSERT NEW ONLY)
 # =========================
-st.subheader("📤 Bulk Upload (Insert New Only)")
-st.caption("Duplicates are checked by **Material + Line** combination.")
+st.subheader("Bulk Upload (Insert New Only)")
 
 uploaded = st.file_uploader("Upload Excel (.xlsx) containing sheet: cleandata", type=["xlsx"])
 
@@ -402,7 +396,7 @@ if uploaded:
             st.cache_resource.clear()
 
     except Exception as e:
-        st.error(f"❌ Failed to process file: {e}")
+        st.error(f"Failed to process file: {e}")
 else:
     st.caption("Upload Excel file to bulk insert new materials.")
 
@@ -411,7 +405,7 @@ st.markdown("---")
 # =========================
 # DB PREVIEW
 # =========================
-st.subheader("📊 Database Preview (Latest 5000 rows)")
+st.subheader("Database Preview")
 df_db = load_db(limit=5000)
 st.dataframe(df_db, use_container_width=True)
 st.caption(f"Showing {len(df_db):,} rows")

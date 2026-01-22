@@ -8,11 +8,9 @@ st.title("Good Issue Cleaner")
 
 uploaded = st.file_uploader("Upload file Good Issue (.xlsx)", type=["xlsx"])
 
-# ====== PROCESS BUTTON ======
 if uploaded:
     if st.button("Start process Good Issue"):
         with st.spinner("Processing..."):
-            # ====== LOGIC (TIDAK DIUBAH) ======
             df = pd.read_excel(uploaded, sheet_name="Sheet1", usecols="H:J", engine="openpyxl")
             df.columns = ["Material", "Description", "Total Delivery quantity"]
 
@@ -25,7 +23,6 @@ if uploaded:
                     "Total Delivery quantity": "sum"
                 })
             )
-            # ====== END LOGIC ======
 
         st.success("Selesai!")
 
