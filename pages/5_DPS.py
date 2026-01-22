@@ -513,18 +513,18 @@ else:
             line_dfs = st.session_state["east_line_dfs"]
             
             st.markdown("---")
-            st.subheader("📥 Download Output")
+            st.subheader("Download Output")
             
             excel_data = create_east_excel_download(line_dfs)
             st.download_button(
-                label="📥 Download Excel File",
+                label="Download Excel File",
                 data=excel_data,
                 file_name="DPS_East_Output.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
             
             st.markdown("---")
-            st.subheader("👁️ Preview Sheets")
+            st.subheader("Preview Sheets")
             
             line_tabs = st.tabs([f"Line {line}" for line in sorted(line_dfs.keys())])
             
