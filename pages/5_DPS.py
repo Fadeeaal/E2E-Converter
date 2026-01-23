@@ -481,6 +481,16 @@ else:
         if st.button("Start Process", type="primary", disabled=not sheet_selected):
             with st.spinner(f"Reading sheet '{selected_sheet}'..."):
                 raw = pd.read_excel(io.BytesIO(file_bytes), sheet_name=selected_sheet, header=None, engine="openpyxl")
+                
+                marker = "Total SH Production"
+                cut_row = None
+                for idx, row in raw.iterrows():
+                    if row.astype(str).str.contains(marker, case=False, na=False).any():
+                        cut_row = idx
+                        break
+
+                if cut_row is not None:
+                    raw = raw.iloc[:cut_row, :].copy()
             
             with st.spinner("Validating sheet format..."):
                 is_valid, error_message = validate_east_sheet_format(raw)

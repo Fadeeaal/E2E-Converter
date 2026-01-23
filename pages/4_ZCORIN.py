@@ -57,6 +57,8 @@ else :
         if st.button("Start process ZCORIN"):
             with st.spinner("Processing..."):
                 df = pd.read_excel(uploaded, sheet_name="Sheet1", engine="openpyxl")
+                
+                df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
 
                 storage_col = df.columns[1]  
                 unit_col = df.columns[12]    
@@ -99,7 +101,7 @@ else :
                 df_f["Start Time"] = start_time
 
                 conv_map = load_conversion_map()
-                df_f["Conversion"] = df_f["Material"].astype(str).str.strip().map(conv_map)
+                df_f["Conversion"] = df_f["Material"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip().map(conv_map)
                 df_f["Unrestricted_vis"] = None
                 df_f["Blocked_vis"] = None
                 df_f["Qual. Inspection_vis"] = None
