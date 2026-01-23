@@ -343,7 +343,30 @@ def process_east_file(raw: pd.DataFrame, engine, month_set: set, cal_map: dict) 
     for line in unique_lines:
         line_df = out[out["Line"] == line].copy()
         line_df["_orig_date"] = pd.to_datetime(line_df["Date"], errors="coerce")
-        line_df = line_df.sort_values(["_orig_date", "Material"], ascending=[True, True]).reset_index(drop=True)
+        
+        sorted_rows = []
+        unique_dates = sorted(line_df["_orig_date"].unique())
+        last_material_prev_day = None
+        
+        for d in unique_dates:
+            day_data = line_df[line_df["_orig_date"] == d].copy()
+            
+            if last_material_prev_day is not None:
+                priority_df = day_data[day_data["Material"] == last_material_prev_day]
+                others_df = day_data[day_data["Material"] != last_material_prev_day]
+                
+                others_df = others_df.sort_values("Material", ascending=True)
+                
+                day_sorted = pd.concat([priority_df, others_df])
+            else:
+                day_sorted = day_data.sort_values("Material", ascending=True)
+            
+            if not day_sorted.empty:
+                last_material_prev_day = day_sorted.iloc[-1]["Material"]
+            
+            sorted_rows.append(day_sorted)
+        
+        line_df = pd.concat(sorted_rows).reset_index(drop=True)
 
         time_starts = []
         time_finishes = []

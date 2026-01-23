@@ -2,15 +2,9 @@ import pandas as pd
 import streamlit as st
 from sqlalchemy import create_engine, text
 
-# =========================
-# PAGE
-# =========================
 st.set_page_config(page_title="Master Data (West)", layout="wide")
 st.title("Master Data (West)")
 
-# =========================
-# DB CONNECTION (cached)
-# =========================
 @st.cache_resource
 def get_engine():
     p = st.secrets["postgres"]
@@ -280,53 +274,150 @@ if uploaded:
 
         st.write("Preview (top 20):")
         st.dataframe(df_up.head(20), use_container_width=True)
-        st.caption(f"Rows in file: {len(df_up):,}")
+        
+        total_rows = len(df_up)
+        st.caption(f"Total rows in file: {total_rows:,}")
+        
+        if st.button("Upload to DB (Insert New & Update Existing)"):
+            with st.spinner("Analyzing data differences..."):
+                uploaded_materials = df_up["material"].unique().tolist()
+                
+                # 2. Ambil data existing dari DB untuk material yang ada di Excel saja
+                #    (Menggunakan tuple untuk query IN)
+                if not uploaded_materials:
+                    st.warning("File Excel kosong atau tidak ada kolom material.")
+                    st.stop()
+                    
+                existing_map = {}
+                
+                # Batch fetch jika datanya banyak (chunking) agar tidak error query too long
+                chunk_size = 1000
+                
+                for i in range(0, len(uploaded_materials), chunk_size):
+                    chunk = uploaded_materials[i:i + chunk_size]
+                    if not chunk: continue
+                    
+                    # Convert list to tuple string for SQL IN clause
+                    # Handle single item tuple syntax issues
+                    if len(chunk) == 1:
+                        ids_str = f"('{chunk[0]}')"
+                    else:
+                        ids_str = str(tuple(chunk))
+                    
+                    sql_fetch = text(f"SELECT * FROM zcorin_converter WHERE material IN {ids_str}")
+                    
+                    with engine.connect() as conn:
+                        rows = conn.execute(sql_fetch).mappings().all()
+                        for r in rows:
+                            existing_map[r['material']] = dict(r)
+                
+                to_insert = []
+                to_update = []
+                skipped_count = 0
+                
+                check_cols = [c for c in DB_COLS if c != 'material']
+                
+                for idx, row in df_up.iterrows():
+                    mat = row['material']
+                    # Ubah row pandas jadi dict bersih
+                    row_dict = row.to_dict()
 
-        if st.button("Upload to DB (Insert New Only)"):
-            with st.spinner("Checking duplicates & inserting..."):
-                existing = get_existing_materials_set()
+                    if mat not in existing_map:
+                        # CASE 1: Material Belum Ada -> INSERT
+                        to_insert.append(row_dict)
+                    else:
+                        # CASE 2: Material Sudah Ada -> CEK PERBEDAAN
+                        db_row = existing_map[mat]
+                        is_different = False
+                        
+                        for col in check_cols:
+                            # Normalisasi value excel vs db untuk perbandingan
+                            val_excel = row_dict.get(col)
+                            val_db = db_row.get(col)
 
-                dup = sorted(set(df_up["material"]) & existing)
-                df_new = df_up[~df_up["material"].isin(existing)].copy()
-
-                if len(df_new) > 0:
-                    insert_sql = text("""
+                            # Handle None/String mismatch
+                            str_excel = str(val_excel).strip() if val_excel is not None else ""
+                            str_db = str(val_db).strip() if val_db is not None else ""
+                            
+                            if str_excel != str_db:
+                                is_different = True
+                                break # Ada 1 beda cukup untuk trigger update
+                        
+                        if is_different:
+                            to_update.append(row_dict)
+                        else:
+                            skipped_count += 1
+                            
+            msg_insert = ""
+            msg_update = ""   
+            
+            if to_insert:
+                insert_sql = text("""
                     INSERT INTO zcorin_converter
                     (material, material_description, country, brand, sub_brand, category, big_category, house, size,
                      pcs_cb, kg_cb, pack_format, size_format, insource_or_outsource, machine_1, updated_at)
                     VALUES
                     (:material, :material_description, :country, :brand, :sub_brand, :category, :big_category, :house, :size,
                      :pcs_cb, :kg_cb, :pack_format, :size_format, :insource_or_outsource, :machine_1, NOW())
-                    """)
+                """)
+                try:
                     with engine.begin() as conn:
-                        conn.execute(insert_sql, df_new.to_dict(orient="records"))
+                        conn.execute(insert_sql, to_insert)
+                    msg_insert = f"✅ Sukses Insert: {len(to_insert)} data baru."
+                except Exception as e:
+                    st.error(f"Error Insert: {e}")
 
-            st.success(f"Inserted new rows: {len(df_new):,}")
-            if dup:
-                st.warning(f"Skipped duplicates (already in DB): {len(dup):,}")
-                st.write(dup)  # list material yang duplikat
-            else:
-                st.info("No duplicates found.")
-
-            st.rerun()
-
+            # Eksekusi Update
+            if to_update:
+                update_sql = text("""
+                    UPDATE zcorin_converter
+                    SET 
+                        material_description = :material_description,
+                        country = :country,
+                        brand = :brand,
+                        sub_brand = :sub_brand,
+                        category = :category,
+                        big_category = :big_category,
+                        house = :house,
+                        size = :size,
+                        pcs_cb = :pcs_cb,
+                        kg_cb = :kg_cb,
+                        pack_format = :pack_format,
+                        size_format = :size_format,
+                        insource_or_outsource = :insource_or_outsource,
+                        machine_1 = :machine_1,
+                        updated_at = NOW()
+                    WHERE material = :material
+                """)
+                try:
+                    with engine.begin() as conn:
+                        conn.execute(update_sql, to_update)
+                    msg_update = f"✏️ Sukses Update: {len(to_update)} data yang berubah."
+                except Exception as e:
+                    st.error(f"Error Update: {e}")
+                    
+            st.success("Upload selesai.")
+            if msg_insert: st.write(msg_insert)
+            if msg_update: st.write(msg_update)
+            if skipped_count > 0:
+                st.info(f"Skipped: {skipped_count} data (karena tidak ada perubahan).")
+            
+            # Refresh halaman agar tabel terupdate
+            if to_insert or to_update:
+                import time
+                time.sleep(1)
+                st.rerun()
+        
     except Exception as e:
         st.error(f"Gagal memproses file: {e}")
 else:
     st.caption("Upload Excel file for bulk upload.")
 
 st.markdown("---")
-
-# =========================
-# VIEW EXISTING DATA (optional)
-# =========================
 st.subheader("Database Preview")
 df_db = load_db(limit=5000)
 st.dataframe(df_db, use_container_width=True)
 
-# =========================
-# SIDEBAR DANGER ZONE
-# =========================
 st.sidebar.subheader("⚠️ Danger Zone")
 confirm = st.sidebar.checkbox("Yes, I want to delete all data (TRUNCATE).")
 if st.sidebar.button("TRUNCATE (clear all data)") and confirm:

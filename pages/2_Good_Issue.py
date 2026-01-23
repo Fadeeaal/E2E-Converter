@@ -6,12 +6,23 @@ import streamlit as st
 st.set_page_config(page_title="Good Issue Cleaner", layout="wide")
 st.title("Good Issue Cleaner")
 
+
 uploaded = st.file_uploader("Upload file Good Issue (.xlsx)", type=["xlsx"])
 
 if uploaded:
+    # Get sheet names
+    xls = pd.ExcelFile(uploaded, engine="openpyxl")
+    sheet_names = xls.sheet_names
+
+    selected_sheet = st.selectbox(
+        "Pilih sheet yang akan diproses:",
+        options=sheet_names,
+        help="Pilih sheet dari file yang diupload"
+    )
+
     if st.button("Start process Good Issue"):
         with st.spinner("Processing..."):
-            df = pd.read_excel(uploaded, sheet_name="Sheet1", usecols="H:J", engine="openpyxl")
+            df = pd.read_excel(uploaded, sheet_name=selected_sheet, usecols="H:J", engine="openpyxl")
             df.columns = ["Material", "Description", "Total Delivery quantity"]
 
             df["Total Delivery quantity"] = pd.to_numeric(df["Total Delivery quantity"], errors="coerce").fillna(0)
@@ -23,8 +34,6 @@ if uploaded:
                     "Total Delivery quantity": "sum"
                 })
             )
-
-        st.success("Selesai!")
 
         st.markdown("---")
 
