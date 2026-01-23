@@ -342,37 +342,45 @@ def process_east_file(raw: pd.DataFrame, engine, month_set: set, cal_map: dict) 
     
     for line in unique_lines:
         line_df = out[out["Line"] == line].copy()
-        line_df = line_df.sort_values(["Date", "Material"], ascending=True).reset_index(drop=True)
-        
+        line_df["_orig_date"] = pd.to_datetime(line_df["Date"], errors="coerce")
+        line_df = line_df.sort_values(["_orig_date", "Material"], ascending=[True, True]).reset_index(drop=True)
+
         time_starts = []
         time_finishes = []
-        
+
         for idx, row in line_df.iterrows():
+            current_date_6am = pd.Timestamp(row["_orig_date"]) + pd.Timedelta(hours=6)
+            
             if idx == 0:
-                time_start = pd.Timestamp(row["Date"]) + pd.Timedelta(hours=7)
+                time_start = pd.Timestamp(row["_orig_date"]) + pd.Timedelta(hours=7)
             else:
-                time_start = time_finishes[idx - 1]
-            
+                prev_finish = time_finishes[-1]
+                
+                if prev_finish > current_date_6am:
+                    time_start = prev_finish
+                else:
+                    time_start = current_date_6am
+
             days_value = row["Days"] if pd.notna(row["Days"]) else 0
-            time_finish = time_start + pd.Timedelta(days=days_value)
             
+            time_finish = time_start + pd.Timedelta(days=days_value)
             time_starts.append(time_start)
             time_finishes.append(time_finish)
-        
+
         line_df["Time Start"] = time_starts
         line_df["Time Finish"] = time_finishes
-        
+
         line_df = line_df[line_df["Time Finish"].dt.month.isin(month_set)].copy()
-        
+
         if line_df.empty:
             continue
-        
+
         line_df = line_df.sort_values("Time Start", ascending=True).reset_index(drop=True)
-        
+
         line_df["Release Time"] = line_df["Time Finish"].apply(calc_release_time)
         line_df["Release Time"] = pd.to_datetime(line_df["Release Time"], errors="coerce").dt.date
         line_df["Release wk"] = line_df["Release Time"].map(cal_map)
-        
+
         final_cols_with_time = [
             "Date", "Material", "Description", "Pack Size", "Kg_TU", "Qty",
             "Qty Bulk in KG", "BIN", "Time Start", "Time Finish",
@@ -380,16 +388,20 @@ def process_east_file(raw: pd.DataFrame, engine, month_set: set, cal_map: dict) 
             "country", "brand", "big_category", "house", "pack_format", "machine_1"
         ]
         line_df = line_df[[c for c in final_cols_with_time if c in line_df.columns]].copy()
-        
-        line_df["Date"] = pd.to_datetime(line_df["Date"]).dt.strftime("%b-%Y")
-        
+
+        # Keep date in original date format (not Month-Year)
+        # No formatting applied to 'Date' column
+
         column_renames = {
-            "Date": "Line",
+            # Do not rename 'Date' to 'Line' anymore
             "Material": "SAP Article",
             "Qty": "Qty (Ctn)"
         }
         line_df = line_df.rename(columns=column_renames)
-        
+
+        # Drop helper column
+        line_df = line_df.drop(columns=["_orig_date"], errors="ignore")
+
         line_dfs[line] = line_df
     
     return line_dfs
@@ -465,10 +477,7 @@ else:
             return pd.ExcelFile(io.BytesIO(file_bytes), engine="openpyxl").sheet_names
         
         file_bytes = uploaded.getvalue()
-        sheet_names = get_sheet_names(file_bytes)
-        
-        st.success(f"✅ File loaded successfully! Found **{len(sheet_names)}** sheet(s).")
-        
+        sheet_names = get_sheet_names(file_bytes)        
         st.markdown("---")
         
         selected_sheet = st.selectbox(
@@ -496,13 +505,12 @@ else:
                 is_valid, error_message = validate_east_sheet_format(raw)
             
             if not is_valid:
-                st.error(f"❌ **Invalid Sheet Format**\n\n{error_message}")
+                st.error(f"Invalid Sheet Format\n\n{error_message}")
                 st.info("Please select a sheet with the correct format:\n"
                         "- Date headers in row 9 (columns Y to CP)\n"
                         "- Line values (AB, CD, GH, JK, TU, VW, XY) in column K\n"
                         "- Material in column F, Description in column G, Kg/CB in column J")
             else:
-                st.success("✅ Sheet format validated successfully!")
                 with st.spinner("Processing file..."):
                     try:
                         line_dfs = process_east_file(raw, engine, MONTH_SET, CAL_MAP)
@@ -510,13 +518,11 @@ else:
                         if not line_dfs:
                             st.error("No data found after processing.")
                         else:
-                            st.success(f"✅ Processing complete! Found {len(line_dfs)} line(s).")
-                            
                             st.session_state["east_line_dfs"] = line_dfs
                             st.session_state["east_processed"] = True
                             
                     except Exception as e:
-                        st.error(f"❌ Error processing file: {str(e)}")
+                        st.error(f"Error processing file: {str(e)}")
                         st.exception(e)
         
         if st.session_state.get("east_processed", False) and "east_line_dfs" in st.session_state:
@@ -545,5 +551,5 @@ else:
                     st.dataframe(df, use_container_width=True, height=400)
                     
     except Exception as e:
-        st.error(f"❌ Error reading file: {str(e)}")
+        st.error(f"Error reading file: {str(e)}")
         st.exception(e)
