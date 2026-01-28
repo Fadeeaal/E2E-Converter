@@ -1,3 +1,4 @@
+pyxlsb
 streamlit>=1.31.0
 pandas
 openpyxl

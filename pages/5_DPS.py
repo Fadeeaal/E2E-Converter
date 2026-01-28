@@ -7,29 +7,32 @@ from sqlalchemy import create_engine, text
 st.set_page_config(page_title="DPS Cleaner Data", layout="wide")
 st.title("DPS Cleaner Data")
 
-c1, c2 = st.columns(2)
-with c1:
-    region = st.radio(
-        "Select Region",
-        options=["West", "East"],
-        horizontal=True,
-        help="Choose West for standard DPS processing or East for DPS EAST processing"
-    )
-
-with c2:
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        m0 = st.number_input("M0 Month (1-12)", min_value=1, max_value=12, value=2, step=1)
-    with c2:
-        m1 = ((m0 - 1 + 1) % 12) + 1
-        st.text_input("M1", value=str(m1), disabled=True)
-    with c3:
-        m2 = ((m0 - 1 + 2) % 12) + 1
-        st.text_input("M2", value=str(m2), disabled=True)
-
-    MONTH_SET = {int(m0), int(m1), int(m2)}
-
 st.markdown("---")
+
+# UI for section selection
+section = st.radio(
+    "Select Section",
+    options=["West", "East", "Combined"],
+    horizontal=True,
+    help="Choose West, East, or Combined DPS processing"
+)
+
+if section in ["West", "East"]:
+    c1, c2 = st.columns(2)
+    with c1:
+        region = section
+    with c2:
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            m0 = st.number_input("M0 Month (1-12)", min_value=1, max_value=12, value=2, step=1)
+        with c2:
+            m1 = ((m0 - 1 + 1) % 12) + 1
+            st.text_input("M1", value=str(m1), disabled=True)
+        with c3:
+            m2 = ((m0 - 1 + 2) % 12) + 1
+            st.text_input("M2", value=str(m2), disabled=True)
+        MONTH_SET = {int(m0), int(m1), int(m2)}
+    st.markdown("---")
 @st.cache_resource
 def get_engine():
     p = st.secrets["postgres"]
@@ -189,6 +192,9 @@ def process_sheet(excel_file, sheet_name: str, month_set: set):
     out["Release wk"] = out["Release time"].map(CAL_MAP)
 
     out = enrich_from_db(out)
+    # Drop 'machine_1' column if present
+    if 'machine_1' in out.columns:
+        out = out.drop(columns=['machine_1'])
 
     return out, "OK"
 
@@ -312,11 +318,11 @@ def process_east_file(raw: pd.DataFrame, engine, month_set: set, cal_map: dict) 
     out = out.merge(conv, how="left", left_on="Material", right_on="material").drop(columns=["material"], errors="ignore")
 
     out = out.merge(
-        master_dps[["material", "line", "kg_cb", "size", "speed"]],
+        master_dps[["material", "line", "size", "speed"]].drop_duplicates(subset=["material", "line"]),
         how="left",
-        left_on=["Material", "Line", "Kg_TU"],
-        right_on=["material", "line", "kg_cb"]
-    ).drop(columns=["material", "line", "kg_cb"], errors="ignore")
+        left_on=["Material", "Line"],
+        right_on=["material", "line"]
+    ).drop(columns=["material", "line"], errors="ignore")
 
     out = out.rename(columns={"size": "Pack Size", "speed": "Speed"})
 
@@ -331,7 +337,7 @@ def process_east_file(raw: pd.DataFrame, engine, month_set: set, cal_map: dict) 
     final_cols = [
         "Date", "Material", "Description", "Kg_TU", "Pack Size", "Speed", "Line", "Qty",
         "Qty Bulk in KG", "BIN", "Prod Hour", "Days",
-        "country", "brand", "big_category", "house", "pack_format", "machine_1"
+        "country", "brand", "big_category", "house", "pack_format"  # removed 'machine_1'
     ]
     out = out[[c for c in final_cols if c in out.columns]].copy()
     out = out.sort_values(["Date", "Line", "Material"], ascending=True)
@@ -367,6 +373,9 @@ def process_east_file(raw: pd.DataFrame, engine, month_set: set, cal_map: dict) 
             sorted_rows.append(day_sorted)
         
         line_df = pd.concat(sorted_rows).reset_index(drop=True)
+        
+        if "Date" in line_df.columns:
+            line_df["Date"] = pd.to_datetime(line_df["Date"], errors="coerce").dt.strftime("%b-%y")
 
         time_starts = []
         time_finishes = []
@@ -408,23 +417,41 @@ def process_east_file(raw: pd.DataFrame, engine, month_set: set, cal_map: dict) 
             "Date", "Material", "Description", "Pack Size", "Kg_TU", "Qty",
             "Qty Bulk in KG", "BIN", "Time Start", "Time Finish",
             "Release Time", "Release wk",
-            "country", "brand", "big_category", "house", "pack_format", "machine_1"
+            "country", "brand", "big_category", "house", "pack_format"  # removed 'machine_1'
         ]
         line_df = line_df[[c for c in final_cols_with_time if c in line_df.columns]].copy()
-
-        # Keep date in original date format (not Month-Year)
-        # No formatting applied to 'Date' column
+        # Drop 'machine_1' column if present (redundant safety)
+        if 'machine_1' in line_df.columns:
+            line_df = line_df.drop(columns=['machine_1'])
 
         column_renames = {
-            # Do not rename 'Date' to 'Line' anymore
             "Material": "SAP Article",
-            "Qty": "Qty (Ctn)"
+            "Qty": "Qty (Ctn)",
+            "Qty Bulk in KG": "Qty Bulk (kg)"
         }
         line_df = line_df.rename(columns=column_renames)
 
         # Drop helper column
         line_df = line_df.drop(columns=["_orig_date"], errors="ignore")
 
+        if "Region" in line_df.columns:
+            region_idx = line_df.columns.get_loc("Region")
+            line_df.insert(region_idx + 1, "Line", line)
+        else:
+            line_df.insert(0, "Line", line)
+        
+        if "Release wk" in line_df.columns:
+            line_df = line_df.rename(columns={"Release wk": "Release Week"})
+
+        if "Release Time" in line_df.columns and "Release Week" in line_df.columns:
+            def rel_ident_fmt(x):
+                if pd.notna(x):
+                    return f"{x.day}{x.month}{x.year}"
+                return ""
+            rel_ident = line_df["Release Time"].apply(rel_ident_fmt)
+            idx = line_df.columns.get_loc("Release Week")
+            line_df.insert(idx + 1, "Rel Ident", rel_ident)
+        
         line_dfs[line] = line_df
     
     return line_dfs
@@ -438,29 +465,65 @@ def create_east_excel_download(line_dfs: dict) -> bytes:
         for line in sorted(line_dfs.keys()):
             line_df = line_dfs[line]
             line_df.to_excel(writer, sheet_name=f"Line_{line}", index=False)
+        
+        if line_dfs:
+            all_east_df = pd.concat(line_dfs.values(), ignore_index=True)
+            all_east_df.to_excel(writer, sheet_name="All_East", index=False)
     
     output.seek(0)
     return output.getvalue()
-uploaded = st.file_uploader("Upload Excel (.xlsx)", type=["xlsx"])
 
-if not uploaded:
-    st.caption("Upload your file to start the process.")
-    st.stop()
+# Only show the main file uploader for West/East, not for Combined
+if section in ["West", "East"]:
+    uploaded = st.file_uploader("Upload Excel (.xlsx)", type=["xlsx"])
+    if not uploaded:
+        st.caption("Upload your file to start the process.")
+        st.stop()
 
-if region == "West":
-    if st.button("Process All Sheets"):
+
+if section == "West":
+    # ...existing code for West...
+    xls = pd.ExcelFile(uploaded, engine="openpyxl")
+    sheet_options = xls.sheet_names
+    selected_sheets = st.multiselect(
+        "Pilih sheet yang ingin diproses:",
+        options=sheet_options,
+        default=[],
+        help="Pilih satu atau lebih sheet untuk diproses"
+    )
+    if st.button("Process Selected Sheets", disabled=not selected_sheets):
         with st.spinner("Processing sheets..."):
-            xls = pd.ExcelFile(uploaded, engine="openpyxl")
-
             results = {}
             report = []
-
-            for sh in xls.sheet_names:
+            for sh in selected_sheets:
                 try:
                     df_out, status = process_sheet(uploaded, sh, MONTH_SET)
                     rows = 0 if df_out is None else len(df_out)
                     report.append((sh, status, rows))
                     if df_out is not None and not df_out.empty:
+                        df_out.insert(0, "Region", region)
+                        if "Line" in df_out.columns:
+                            df_out = df_out.rename(columns={"Line": "Date"})
+                        region_idx = df_out.columns.get_loc("Region")
+                        df_out.insert(region_idx + 1, "Line", sh)
+                        df_out = df_out.rename(columns={
+                            "Release wk": "Release Week",
+                            "Time_Finish": "Time Finish",
+                            "Release time": "Release Time"
+                        })
+                        if "Release Time" in df_out.columns and "Release Week" in df_out.columns:
+                            def rel_ident_fmt(x):
+                                if pd.notna(x):
+                                    return f"{x.day}{x.month}{x.year}"
+                                return ""
+                            rel_ident = df_out["Release Time"].apply(rel_ident_fmt)
+                            idx = df_out.columns.get_loc("Release Week")
+                            df_out.insert(idx + 1, "Rel Ident", rel_ident)
+                        # Samakan nama kolom agar konsisten di All_West
+                        df_out = df_out.rename(columns={
+                            "Qty (Ctn)": "Qty (ctn)",
+                            "Qty Bulk in KG": "Qty Bulk (kg)"
+                        })
                         results[sh] = df_out
                 except Exception as e:
                     report.append((sh, f"ERROR: {e}", 0))
@@ -476,103 +539,208 @@ if region == "West":
             with pd.ExcelWriter(output, engine="openpyxl") as writer:
                 for sh, df_out in results.items():
                     df_out.to_excel(writer, sheet_name=sh, index=False)
+                if results:
+                    all_west_df = pd.concat(results.values(), ignore_index=True)
+                    all_west_df.to_excel(writer, sheet_name="All_West", index=False)
             output.seek(0)
 
-        st.success(f"Done! Sheets processed: {len(results)} / {len(xls.sheet_names)}")
+        st.success(f"Done! Sheets processed: {len(results)} / {len(selected_sheets)}")
 
         st.subheader("Preview Data per Sheet")
         for sh, df_out in results.items():
             with st.expander(f"📄 {sh} ({len(df_out)} rows)", expanded=False):
                 st.dataframe(df_out, use_container_width=True)
 
+        # Format nama file pakai singkatan bulan M0-M2
+        month_names = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"]
+        m0_name = month_names[(int(m0)-1)%12]
+        m1_name = month_names[(int(m1)-1)%12]
+        m2_name = month_names[(int(m2)-1)%12]
+        file_name = f"DPS_WEST_{m0_name}{m1_name}{m2_name}.xlsx"
+
         st.download_button(
             "Download Output (Excel)",
             data=output,
-            file_name="Fulfilment_Processed_Filtered_M0_M2.xlsx",
+            file_name=file_name,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
-        
-else: 
+
+elif section == "East":
+    # ...existing code for East...
     try:
         @st.cache_data
         def get_sheet_names(file_bytes):
             """Cache sheet names to avoid re-reading Excel file"""
             return pd.ExcelFile(io.BytesIO(file_bytes), engine="openpyxl").sheet_names
-        
+
         file_bytes = uploaded.getvalue()
-        sheet_names = get_sheet_names(file_bytes)        
+        sheet_names = get_sheet_names(file_bytes)
         st.markdown("---")
-        
-        selected_sheet = st.selectbox(
-            "📋 Select Sheet to Process",
-            options=["-- Select a sheet --"] + sheet_names,
-            help="Choose the sheet containing the daily production data"
+
+        # Multiselect untuk pilih beberapa sheet
+        selected_sheets = st.multiselect(
+            "Pilih sheet yang ingin diproses:",
+            options=sheet_names,
+            default=[],
+            help="Pilih satu atau lebih sheet untuk diproses"
         )
 
-        sheet_selected = selected_sheet and selected_sheet != "-- Select a sheet --"
-        if st.button("Start Process", type="primary", disabled=not sheet_selected):
-            with st.spinner(f"Reading sheet '{selected_sheet}'..."):
-                raw = pd.read_excel(io.BytesIO(file_bytes), sheet_name=selected_sheet, header=None, engine="openpyxl")
-                
-                marker = "Total SH Production"
-                cut_row = None
-                for idx, row in raw.iterrows():
-                    if row.astype(str).str.contains(marker, case=False, na=False).any():
-                        cut_row = idx
-                        break
+        if st.button("Process Selected Sheets", disabled=not selected_sheets):
+            # Gabungkan semua hasil line dari semua sheet berdasarkan nama line
+            combined_line_dfs = {}
+            error_report = []
+            for selected_sheet in selected_sheets:
+                with st.spinner(f"Reading sheet '{selected_sheet}'..."):
+                    raw = pd.read_excel(io.BytesIO(file_bytes), sheet_name=selected_sheet, header=None, engine="openpyxl")
+                    marker = "Total SH Production"
+                    cut_row = None
+                    for idx, row in raw.iterrows():
+                        if row.astype(str).str.contains(marker, case=False, na=False).any():
+                            cut_row = idx
+                            break
+                    if cut_row is not None:
+                        raw = raw.iloc[:cut_row, :].copy()
 
-                if cut_row is not None:
-                    raw = raw.iloc[:cut_row, :].copy()
-            
-            with st.spinner("Validating sheet format..."):
-                is_valid, error_message = validate_east_sheet_format(raw)
-            
-            if not is_valid:
-                st.error(f"Invalid Sheet Format\n\n{error_message}")
-                st.info("Please select a sheet with the correct format:\n"
-                        "- Date headers in row 9 (columns Y to CP)\n"
-                        "- Line values (AB, CD, GH, JK, TU, VW, XY) in column K\n"
-                        "- Material in column F, Description in column G, Kg/CB in column J")
-            else:
-                with st.spinner("Processing file..."):
+                with st.spinner(f"Validating & processing '{selected_sheet}'..."):
+                    is_valid, error_message = validate_east_sheet_format(raw)
+                    if not is_valid:
+                        error_report.append((selected_sheet, error_message))
+                        continue
                     try:
                         line_dfs = process_east_file(raw, engine, MONTH_SET, CAL_MAP)
-                        
                         if not line_dfs:
-                            st.error("No data found after processing.")
+                            error_report.append((selected_sheet, "No data found after processing."))
                         else:
-                            st.session_state["east_line_dfs"] = line_dfs
-                            st.session_state["east_processed"] = True
-                            
+                            for line, df in line_dfs.items():
+                                if "Region" not in df.columns:
+                                    df.insert(0, "Region", region)
+                                # Gabungkan df ke line yang sama
+                                if line not in combined_line_dfs:
+                                    combined_line_dfs[line] = [df]
+                                else:
+                                    combined_line_dfs[line].append(df)
                     except Exception as e:
-                        st.error(f"Error processing file: {str(e)}")
-                        st.exception(e)
-        
-        if st.session_state.get("east_processed", False) and "east_line_dfs" in st.session_state:
-            line_dfs = st.session_state["east_line_dfs"]
-            
+                        error_report.append((selected_sheet, f"Error processing file: {str(e)}"))
+
+            # Gabungkan DataFrame per line
+            final_line_dfs = {}
+            for line, df_list in combined_line_dfs.items():
+                final_line_dfs[line] = pd.concat(df_list, ignore_index=True)
+
+            if not final_line_dfs:
+                st.error("No data found in any selected sheet.")
+                if error_report:
+                    st.dataframe(pd.DataFrame(error_report, columns=["Sheet", "Error"]), use_container_width=True)
+                st.stop()
+
+            st.success(f"Done! Sheets processed: {len(final_line_dfs)} line(s) from {len(selected_sheets)} sheet(s)")
+
             st.markdown("---")
             st.subheader("Download Output")
-            
-            excel_data = create_east_excel_download(line_dfs)
+            excel_data = create_east_excel_download(final_line_dfs)
             st.download_button(
                 label="Download Excel File",
                 data=excel_data,
                 file_name="DPS_East_Output.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
-            
+
             st.markdown("---")
             st.subheader("Preview Sheets")
-            
-            line_tabs = st.tabs([f"Line {line}" for line in sorted(line_dfs.keys())])
-            
-            for tab, line in zip(line_tabs, sorted(line_dfs.keys())):
+            line_tabs = st.tabs([f"Line_{k}" for k in sorted(final_line_dfs.keys())])
+            for tab, k in zip(line_tabs, sorted(final_line_dfs.keys())):
                 with tab:
-                    df = line_dfs[line]
+                    df = final_line_dfs[k]
                     st.write(f"**Total rows:** {len(df)}")
                     st.dataframe(df, use_container_width=True, height=400)
-                    
+
+            if error_report:
+                st.markdown("---")
+                st.subheader("Error Report")
+                st.dataframe(pd.DataFrame(error_report, columns=["Sheet", "Error"]), use_container_width=True)
     except Exception as e:
         st.error(f"Error reading file: {str(e)}")
         st.exception(e)
+
+elif section == "Combined":
+    st.header("Combine DPS West & East")
+    st.caption("Upload masing-masing file hasil DPS West dan DPS East yang sudah memiliki sheet All_West dan All_East.")
+    uploaded_files = st.file_uploader(
+        "Upload 2 file Excel (.xlsx): 1 untuk West, 1 untuk East",
+        type=["xlsx"],
+        accept_multiple_files=True,
+        key="combined_multi"
+    )
+    if not uploaded_files or len(uploaded_files) < 2:
+        st.info("Upload dua file (West & East) untuk mulai proses combine.")
+        st.stop()
+    try:
+        # Cari file mana West/East berdasarkan sheet di dalamnya
+        file_west, file_east = None, None
+        for f in uploaded_files:
+            xls = pd.ExcelFile(f, engine="openpyxl")
+            sheetnames = [s.strip().lower() for s in xls.sheet_names]
+            if "all_west" in sheetnames:
+                file_west = f
+            if "all_east" in sheetnames:
+                file_east = f
+        if not file_west or not file_east:
+            st.error("Pastikan satu file mengandung sheet 'All_West' dan satu file mengandung sheet 'All_East'.")
+            st.stop()
+        # Baca sheet
+        df_west = pd.read_excel(file_west, sheet_name="All_West", header=0, engine="openpyxl")
+        df_east = pd.read_excel(file_east, sheet_name="All_East", header=0, engine="openpyxl")
+
+        # Required columns (case-insensitive)
+        required_cols = [
+            "Region", "Line", "SAP Article", "Description", "Pack Size", "Kg_TU",
+            "Qty (Ctn)", "Qty Bulk (kg)", "BIN", "Time Start", "Time Finish"
+        ]
+
+        def select_and_normalize(df):
+            col_map = {c.lower().strip(): c for c in df.columns}
+            out_cols = []
+            for req in required_cols:
+                found = None
+                for c in df.columns:
+                    if c.lower().strip() == req.lower().strip():
+                        found = c
+                        break
+                if found:
+                    out_cols.append(found)
+                else:
+                    out_cols.append(None)
+            selected = pd.DataFrame()
+            for req, col in zip(required_cols, out_cols):
+                if col is not None:
+                    selected[req] = df[col]
+                else:
+                    selected[req] = None
+            for tcol in ["Time Start", "Time Finish"]:
+                if tcol in selected.columns:
+                    selected[tcol] = pd.to_datetime(selected[tcol], errors="coerce").dt.date
+            return selected
+
+        df_west_sel = select_and_normalize(df_west)
+        df_east_sel = select_and_normalize(df_east)
+        df_combined = pd.concat([df_west_sel, df_east_sel], ignore_index=True)
+
+        st.success(f"Data digabungkan: {len(df_west_sel)} baris dari West, {len(df_east_sel)} baris dari East, total {len(df_combined)} baris.")
+        st.markdown("---")
+        st.subheader("Preview Combined Data")
+        st.dataframe(df_combined, use_container_width=True, height=400)
+
+        # Download button
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            df_combined.to_excel(writer, sheet_name="Combined_DPS", index=False)
+        output.seek(0)
+        st.download_button(
+            label="Download Combined Excel",
+            data=output,
+            file_name="Combined_DPS.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+    except Exception as e:
+        st.error(f"Gagal membaca file: {str(e)}")
+        st.stop()

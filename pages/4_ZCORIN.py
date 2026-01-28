@@ -34,10 +34,7 @@ def load_conversion_map():
 def parse_date_series(s: pd.Series) -> pd.Series:
     """
     Convert date-like strings from SAP/Excel to real datetime.
-    Primary guess: mm/dd/yyyy (common in exports),
-    fallback: generic parse.
     """
-
     a = pd.to_datetime(s, format="%m/%d/%Y", errors="coerce")
     b = pd.to_datetime(s, errors="coerce", dayfirst=False)
     return a.combine_first(b)
@@ -48,64 +45,64 @@ start_time = st.date_input("Start Time", value=None)
 if not uploaded:
     st.caption("Upload your file to start the process.")
 
-else :
+else:
     if not start_time:
         st.caption("Fill in Start Time first (date input).")
         st.stop()
     
-    else :
+    else:
         if st.button("Start process ZCORIN"):
             with st.spinner("Processing..."):
+                # Load data
                 df = pd.read_excel(uploaded, sheet_name="Sheet1", engine="openpyxl")
-                
                 df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
 
                 storage_col = df.columns[1]  
                 unit_col = df.columns[12]    
 
-                df_f = df[
-                    (df[storage_col].isin([1, 6]) | df[storage_col].isna()) &
-                    (df[unit_col].astype(str).str.strip().str.upper() == "PC")
-                ].copy()
+                # --- PERBAIKAN FILTER: Agar 1 dan 6 tertangkap dengan aman ---
+                # Ubah ke string sementara untuk pengecekan filter
+                df_temp_storage = df[storage_col].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
+                
+                mask_storage = (df_temp_storage.isin(['1', '6'])) | (df[storage_col].isna())
+                mask_unit = (df[unit_col].astype(str).str.strip().str.upper() == "PC")
+                
+                df_f = df[mask_storage & mask_unit].copy()
 
+                # Sort logic
                 def storage_sort_key(x):
-                    if pd.isna(x) or str(x).strip() == "":
+                    s = str(x).strip().replace('.0', '')
+                    if pd.isna(x) or s == "" or s.lower() == "nan":
                         return 0
-                    if str(x).strip() == "1":
+                    if s == "1":
                         return 1
-                    if str(x).strip() == "6":
+                    if s == "6":
                         return 2
                     return 99
 
                 df_f["_storage_sort"] = df_f[storage_col].apply(storage_sort_key)
                 df_f = df_f.sort_values("_storage_sort").drop(columns="_storage_sort")
 
+                # Kolom wajib
                 required_cols = [
-                    "Material",
-                    "Unrestricted",
-                    "Blocked",
-                    "Qual. Inspection",
-                    "Transfer",
-                    "Returns(Blocked)",
-                    "In Transit-Receivi",
-                    "SLED/BBD",
-                    "Manuf. Dte",
+                    "Material", "Unrestricted", "Blocked", "Qual. Inspection",
+                    "Transfer", "Returns(Blocked)", "In Transit-Receivi",
+                    "SLED/BBD", "Manuf. Dte",
                 ]
                 missing = [c for c in required_cols if c not in df_f.columns]
                 if missing:
                     st.error(f"Kolom ini tidak ditemukan di file: {missing}")
                     st.stop()
 
-
+                # Tanggal & Konversi
                 df_f["SLED/BBD"] = parse_date_series(df_f["SLED/BBD"])
                 df_f["Manuf. Dte"] = parse_date_series(df_f["Manuf. Dte"])
                 df_f["Start Time"] = pd.to_datetime(start_time)
 
-
                 conv_map = load_conversion_map()
-                # Pastikan kolom Conversion ada sebelum dipakai
                 df_f["Conversion"] = df_f["Material"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip().map(conv_map)
 
+                # Kalkulasi Visualisasi
                 df_f["Unrestricted_vis"] = df_f["Unrestricted"] / df_f["Conversion"]
                 df_f["Blocked_vis"] = df_f["Blocked"] / df_f["Conversion"]
                 df_f["Qual. Inspection_vis"] = df_f["Qual. Inspection"] / df_f["Conversion"]
@@ -117,26 +114,38 @@ else :
                     + df_f["Qual. Inspection_vis"].fillna(0)
                     + df_f["In Transit-Receivi_vis"].fillna(0)
                 )
+                
                 df_f["Shelf Life"] = ((df_f["SLED/BBD"] - df_f["Start Time"]).dt.days / 360).round(2)
                 df_f["Total Shelf life (years)"] = ((df_f["SLED/BBD"] - df_f["Manuf. Dte"]).dt.days / 360).round(2)
                 df_f["Remaining Shelf life (%)"] = (
-                    (df_f["Shelf Life"] / df_f["Total Shelf life (years)"] * 100).round(2)
+                    (df_f["Shelf Life"] / df_f["Total Shelf life (years)"] * 100).round(2).astype(str) + "%"
                 )
                 df_f["Aging (month)"] = ((df_f["Start Time"] - df_f["Manuf. Dte"]).dt.days / 30).round(2)
                 df_f["Unit_vis"] = "Ctn"
                 df_f["MRP Controller_vis"] = ""
                 df_f["Vendor Batch_vis"] = ""
 
-                # Clean up inf/-inf and NaN
-                for col in [
+                # --- PERBAIKAN OUTPUT STORAGE LOCATION: Menghapus .0 dan NaN ---
+                def format_sloc(val):
+                    if pd.isna(val) or str(val).strip().lower() == 'nan' or str(val).strip() == '':
+                        return ""
+                    try:
+                        return str(int(float(val)))
+                    except:
+                        return str(val).strip()
+
+                df_f[storage_col] = df_f[storage_col].apply(format_sloc)
+
+                # Clean up inf/-inf and NaN pada kolom angka
+                numeric_vis_cols = [
                     "Unrestricted_vis", "Blocked_vis", "Qual. Inspection_vis", "Transfer_vis",
                     "Returns(Blocked)_vis", "In Transit-Receivi_vis", "Total_vis",
                     "Shelf Life", "Total Shelf life (years)", "Remaining Shelf life (%)", "Aging (month)"
-                ]:
+                ]
+                for col in numeric_vis_cols:
                     df_f[col] = df_f[col].replace([float('inf'), float('-inf')], pd.NA)
 
-
-                # Reorder columns as requested
+                # Reorder columns
                 output_columns = [
                     "Plant", "Storage Location", "Material", "Material Description", "Batch", "SLED/BBD", "Manuf. Dte",
                     "Unrestricted", "Blocked", "Qual. Inspection", "Transfer", "Returns(Blocked)", "Unit", "MRP Controller", "Vendor Batch",
@@ -145,10 +154,10 @@ else :
                     "Unit_vis", "MRP Controller_vis", "Vendor Batch_vis", "In Transit-Receivi_vis", "Total_vis",
                     "Shelf Life", "Total Shelf life (years)", "Remaining Shelf life (%)", "Aging (month)"
                 ]
-                # Only keep columns that exist in df_f
                 output_columns = [col for col in output_columns if col in df_f.columns]
                 df_f = df_f[output_columns]
 
+                # Export to Excel
                 base_name = os.path.splitext(uploaded.name)[0]
                 out_name = f"{base_name}_vis.xlsx"
 

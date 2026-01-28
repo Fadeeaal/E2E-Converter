@@ -6,8 +6,8 @@ st.set_page_config(page_title="ROFO Compiler", layout="wide")
 st.title("ROFO Compiler")
 
 uploaded_files = st.file_uploader(
-    "Upload file SOP (.xlsx)",
-    type=["xlsx"],
+    "Upload file SOP (.xlsx/.xlsb)",
+    type=["xlsx", "xlsb"],
     accept_multiple_files=True
 )
 
@@ -48,7 +48,18 @@ def find_sku_col(df: pd.DataFrame) -> str:
 
 def read_filtered(excel_file, sheet_name: str, year_filter: int) -> pd.DataFrame:
     """Baca 1 file+sheet, filter by distributor/uom/year saja (tanpa CYCLE)."""
-    df = pd.read_excel(excel_file, sheet_name=sheet_name, header=1, engine="openpyxl")
+    # Pilih engine berdasarkan ekstensi file
+    if hasattr(excel_file, 'name'):
+        fname = excel_file.name.lower()
+    elif isinstance(excel_file, str):
+        fname = excel_file.lower()
+    else:
+        fname = ""
+    if fname.endswith(".xlsb"):
+        engine = "pyxlsb"
+    else:
+        engine = "openpyxl"
+    df = pd.read_excel(excel_file, sheet_name=sheet_name, header=1, engine=engine)
     df = df.loc[:, ~df.columns.isna()]
     df = df.drop(columns=[c for c in df.columns if str(c).startswith("Unnamed")], errors="ignore")
 
