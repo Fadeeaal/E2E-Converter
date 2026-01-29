@@ -142,6 +142,10 @@ mode = st.radio(
 
 st.markdown("---")
 
+# tampilkan flash message jika ada (setelah update)
+if st.session_state.get("update_flash"):
+    st.success(st.session_state.pop("update_flash"))
+
 # =========================
 # EDIT MODE
 # =========================
@@ -169,8 +173,7 @@ if mode == "✏️ Edit Existing":
     if search_material:
         row = get_row_by_material(search_material)
         if row:
-            st.success(f"Editing: Material **{search_material}**")
-            st.caption(f"DB id: {row.get('id')} | last updated: {row.get('updated_at')}")
+            st.success(f"Found Material **{search_material}**")
             with st.form("edit_existing"):
                 c1, c2 = st.columns(2)
                 with c1:
@@ -213,10 +216,18 @@ if mode == "✏️ Edit Existing":
                     try:
                         count, changed_cols = update_only_changed(row["material"], row, new_values)
                         if count == 0:
-                            st.info("Tidak ada perubahan (no update executed).")
+                            st.info("No changes detected (no update executed).")
                         else:
-                            st.success(f"Update berhasil. Kolom berubah: {changed_cols}")
-                        st.rerun()
+                            changed_items = []
+                            for col in changed_cols:
+                                old_v = row.get(col)
+                                new_v = new_values.get(col)
+                                changed_items.append(f"{col}: '{old_v}' -> '{new_v}'")
+                            st.session_state["update_flash"] = (
+                                f"Material {row['material']} updated successfully! Changes: "
+                                + "; ".join(changed_items)
+                            )
+                            st.rerun()
                     except Exception as e:
                         st.error(f"Gagal update: {e}")
         else:
@@ -420,121 +431,6 @@ def get_existing_materials_set() -> set:
     with engine.connect() as conn:
         rows = conn.execute(text("SELECT material FROM zcorin_converter")).fetchall()
     return set(r[0] for r in rows if r and r[0] is not None)
-
-st.subheader("Search Material")
-
-search_material = st.text_input("Type your material code", placeholder="Contoh: 1234567").strip()
-
-if search_material:
-    row = get_row_by_material(search_material)
-
-    if row is None:
-        st.warning("Material not found. Please add new data below.")
-        with st.form("add_new"):
-            # material locked (filled from search)
-            st.text_input("Material *", value=search_material, disabled=True)
-
-            c1, c2 = st.columns(2)
-            with c1:
-                material_description = st.text_input("Material Description")
-                country = st.text_input("Country")
-                brand = st.text_input("Brand")
-                sub_brand = st.text_input("Subbrand")
-                category = st.text_input("Category")
-                big_category = st.text_input("Big Category")
-            with c2:
-                house = st.text_input("House")
-                size = st.text_input("Size")
-                pcs_cb = st.text_input("Pcs/cb")
-                kg_cb = st.text_input("KG/CB")
-                pack_format = st.text_input("Pack format")
-                size_format = st.text_input("Size format")
-                insource_or_outsource = st.text_input("Insource / Outsource")
-                machine_1 = st.text_input("Machine 1")
-
-            submitted = st.form_submit_button("Insert New Material")
-
-            if submitted:
-                payload = {
-                    "material": search_material,
-                    "material_description": material_description.strip() or None,
-                    "country": country.strip() or None,
-                    "brand": brand.strip() or None,
-                    "sub_brand": sub_brand.strip() or None,
-                    "category": category.strip() or None,
-                    "big_category": big_category.strip() or None,
-                    "house": house.strip() or None,
-                    "size": size.strip() or None,
-                    "pcs_cb": pcs_cb.strip() or None,
-                    "kg_cb": kg_cb.strip() or None,
-                    "pack_format": pack_format.strip() or None,
-                    "size_format": size_format.strip() or None,
-                    "insource_or_outsource": insource_or_outsource.strip() or None,
-                    "machine_1": machine_1.strip() or None,
-                }
-                try:
-                    insert_row(payload)
-                    st.success("Insert berhasil.")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Gagal insert: {e}")
-
-    else:
-        st.success("Material ditemukan. Kamu bisa edit datanya di bawah ini.")
-        st.caption(f"DB id: {row.get('id')} | last updated: {row.get('updated_at')}")
-
-        with st.form("edit_existing"):
-            st.text_input("Material *", value=row.get("material"), disabled=True)
-
-            c1, c2 = st.columns(2)
-            with c1:
-                material_description = st.text_input("Material Description", value=row.get("material_description") or "")
-                country = st.text_input("Country", value=row.get("country") or "")
-                brand = st.text_input("Brand", value=row.get("brand") or "")
-                sub_brand = st.text_input("Subbrand", value=row.get("sub_brand") or "")
-                category = st.text_input("Category", value=row.get("category") or "")
-                big_category = st.text_input("Big Category", value=row.get("big_category") or "")
-            with c2:
-                house = st.text_input("House", value=row.get("house") or "")
-                size = st.text_input("Size", value=row.get("size") or "")
-                pcs_cb = st.text_input("Pcs/cb", value=row.get("pcs_cb") or "")
-                kg_cb = st.text_input("KG/CB", value=row.get("kg_cb") or "")
-                pack_format = st.text_input("Pack format", value=row.get("pack_format") or "")
-                size_format = st.text_input("Size format", value=row.get("size_format") or "")
-                insource_or_outsource = st.text_input("Insource / Outsource", value=row.get("insource_or_outsource") or "")
-                machine_1 = st.text_input("Machine 1", value=row.get("machine_1") or "")
-
-            submitted = st.form_submit_button("Update Material")
-
-            if submitted:
-                new_values = {
-                    "material": row["material"],
-                    "material_description": material_description.strip() or None,
-                    "country": country.strip() or None,
-                    "brand": brand.strip() or None,
-                    "sub_brand": sub_brand.strip() or None,
-                    "category": category.strip() or None,
-                    "big_category": big_category.strip() or None,
-                    "house": house.strip() or None,
-                    "size": size.strip() or None,
-                    "pcs_cb": pcs_cb.strip() or None,
-                    "kg_cb": kg_cb.strip() or None,
-                    "pack_format": pack_format.strip() or None,
-                    "size_format": size_format.strip() or None,
-                    "insource_or_outsource": insource_or_outsource.strip() or None,
-                    "machine_1": machine_1.strip() or None,
-                }
-
-                try:
-                    count, changed_cols = update_only_changed(row["material"], row, new_values)
-                    if count == 0:
-                        st.info("Tidak ada perubahan (no update executed).")
-                    else:
-                        st.success(f"Update berhasil. Kolom berubah: {changed_cols}")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Gagal update: {e}")
-
 
 st.subheader("Bulk Upload Excel")
 
