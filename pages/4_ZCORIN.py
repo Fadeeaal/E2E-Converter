@@ -124,6 +124,10 @@ else:
                 df_f["Unit_vis"] = "Ctn"
                 df_f["MRP Controller_vis"] = ""
                 df_f["Vendor Batch_vis"] = ""
+                df_f["Start Time"] = pd.to_datetime(df_f["Start Time"]).dt.date
+
+                df_f["SLED/BBD"] = df_f["SLED/BBD"].dt.date
+                df_f["Manuf. Dte"] = df_f["Manuf. Dte"].dt.date
 
                 # --- PERBAIKAN OUTPUT STORAGE LOCATION: Menghapus .0 dan NaN ---
                 def format_sloc(val):

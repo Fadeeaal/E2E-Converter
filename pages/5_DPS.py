@@ -1,5 +1,6 @@
 import io
 import os
+import re
 import pandas as pd
 import streamlit as st
 from sqlalchemy import create_engine, text
@@ -59,7 +60,7 @@ def load_calendar_map():
 def load_zcorin_map():
     """zcorin_converter: material(str) -> enrichment columns"""
     sql = text("""
-        SELECT material, country, brand, big_category, house, pack_format, machine_1
+        SELECT material, country, brand, sub_brand, category, big_category, house, pack_format, machine_1, output
         FROM zcorin_converter
     """)
     with engine.connect() as conn:
@@ -136,7 +137,7 @@ def enrich_from_db(out: pd.DataFrame) -> pd.DataFrame:
     material_col = detect_material_col(out)
     keys = out[material_col].astype(str).str.strip()
 
-    enrich_cols = ["country", "brand", "big_category", "house", "pack_format", "machine_1"]
+    enrich_cols = ["country", "brand", "sub_brand", "category", "big_category", "house", "pack_format"]
     for c in enrich_cols:
         out[c] = keys.map(lambda k: ZCORIN_MAP.get(k, {}).get(c))
 
@@ -212,7 +213,7 @@ VALID_LINES = {"AB", "CD", "GH", "JK", "TU", "VW", "XY"}
 
 def load_zcorin_converter(engine) -> pd.DataFrame:
     sql = text("""
-        SELECT material, country, brand, big_category, house, pack_format, machine_1
+        SELECT material, country, brand, sub_brand, category, big_category, house, pack_format, machine_1, output
         FROM zcorin_converter
     """)
     with engine.connect() as conn:
@@ -337,7 +338,7 @@ def process_east_file(raw: pd.DataFrame, engine, month_set: set, cal_map: dict) 
     final_cols = [
         "Date", "Material", "Description", "Kg_TU", "Pack Size", "Speed", "Line", "Qty",
         "Qty Bulk in KG", "BIN", "Prod Hour", "Days",
-        "country", "brand", "big_category", "house", "pack_format"  # removed 'machine_1'
+        "country", "brand", "sub_brand", "category", "big_category", "house", "pack_format"  # removed 'machine_1'
     ]
     out = out[[c for c in final_cols if c in out.columns]].copy()
     out = out.sort_values(["Date", "Line", "Material"], ascending=True)
@@ -417,7 +418,7 @@ def process_east_file(raw: pd.DataFrame, engine, month_set: set, cal_map: dict) 
             "Date", "Material", "Description", "Pack Size", "Kg_TU", "Qty",
             "Qty Bulk in KG", "BIN", "Time Start", "Time Finish",
             "Release Time", "Release wk",
-            "country", "brand", "big_category", "house", "pack_format"  # removed 'machine_1'
+            "country", "brand", "sub_brand", "category", "big_category", "house", "pack_format"  # removed 'machine_1'
         ]
         line_df = line_df[[c for c in final_cols_with_time if c in line_df.columns]].copy()
         # Drop 'machine_1' column if present (redundant safety)
@@ -434,15 +435,11 @@ def process_east_file(raw: pd.DataFrame, engine, month_set: set, cal_map: dict) 
         # Drop helper column
         line_df = line_df.drop(columns=["_orig_date"], errors="ignore")
 
-        if "Region" in line_df.columns:
-            region_idx = line_df.columns.get_loc("Region")
-            line_df.insert(region_idx + 1, "Line", line)
-        else:
-            line_df.insert(0, "Line", line)
-        
+        # Normalize Release Week name if present
         if "Release wk" in line_df.columns:
             line_df = line_df.rename(columns={"Release wk": "Release Week"})
 
+        # Create standardized Release Ident next to Release Week
         if "Release Time" in line_df.columns and "Release Week" in line_df.columns:
             def rel_ident_fmt(x):
                 if pd.notna(x):
@@ -450,8 +447,20 @@ def process_east_file(raw: pd.DataFrame, engine, month_set: set, cal_map: dict) 
                 return ""
             rel_ident = line_df["Release Time"].apply(rel_ident_fmt)
             idx = line_df.columns.get_loc("Release Week")
-            line_df.insert(idx + 1, "Rel Ident", rel_ident)
-        
+            line_df.insert(idx + 1, "Release Ident", rel_ident)
+
+        # Ensure 'Line' column exists and keep it along with standard output columns
+        if "Line" not in line_df.columns:
+            line_df.insert(0, "Line", line)
+
+        cols = ["Line"] + [c for c in TARGET_OUTPUT_COLS if c in line_df.columns]
+        # preserve enrichment columns if present
+        for extra in ["country", "brand", "sub_brand", "category", "big_category", "house", "pack_format"]:
+            if extra in line_df.columns and extra not in cols:
+                cols.append(extra)
+
+        line_df = line_df[cols].copy()
+
         line_dfs[line] = line_df
     
     return line_dfs
@@ -463,15 +472,51 @@ def create_east_excel_download(line_dfs: dict) -> bytes:
     
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         for line in sorted(line_dfs.keys()):
-            line_df = line_dfs[line]
+            line_df = line_dfs[line].copy()
+            # Ensure a Line column exists with the line name
+            if "Line" not in line_df.columns:
+                line_df.insert(0, "Line", line)
             line_df.to_excel(writer, sheet_name=f"Line_{line}", index=False)
         
         if line_dfs:
+            # Concatenate and ensure 'Line' exists
             all_east_df = pd.concat(line_dfs.values(), ignore_index=True)
+            if "Line" not in all_east_df.columns:
+                # Try to infer line from sheet-level keys by adding a placeholder
+                all_east_df.insert(0, "Line", None)
             all_east_df.to_excel(writer, sheet_name="All_East", index=False)
     
     output.seek(0)
     return output.getvalue()
+
+
+# Desired final column order for both West and East outputs
+TARGET_OUTPUT_COLS = [
+    "Date", "SAP Article", "Description", "Pack Size", "Kg_TU",
+    "Qty (Ctn)", "Qty Bulk (kg)", "BIN", "Time Start", "Time Finish",
+    "Release Time", "Release Week", "Release Ident"
+]
+
+
+def ensure_output_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Return DataFrame with columns in TARGET_OUTPUT_COLS order.
+    Case-insensitive mapping is used to find existing similar column names
+    (e.g., 'Rel Ident' -> 'Release Ident', 'Qty (ctn)' -> 'Qty (Ctn)').
+    Missing columns are created with None values.
+    """
+    existing_map = {c.lower().strip(): c for c in df.columns}
+    out = pd.DataFrame()
+    for t in TARGET_OUTPUT_COLS:
+        key = t.lower().strip()
+        found = existing_map.get(key)
+        # common alias: 'rel ident' -> 'release ident'
+        if not found and key == "release ident" and "rel ident" in existing_map:
+            found = existing_map["rel ident"]
+        if found:
+            out[t] = df[found]
+        else:
+            out[t] = None
+    return out
 
 # Only show the main file uploader for West/East, not for Combined
 if section in ["West", "East"]:
@@ -518,12 +563,35 @@ if section == "West":
                                 return ""
                             rel_ident = df_out["Release Time"].apply(rel_ident_fmt)
                             idx = df_out.columns.get_loc("Release Week")
-                            df_out.insert(idx + 1, "Rel Ident", rel_ident)
+                            df_out.insert(idx + 1, "Release Ident", rel_ident)
                         # Samakan nama kolom agar konsisten di All_West
                         df_out = df_out.rename(columns={
-                            "Qty (Ctn)": "Qty (ctn)",
                             "Qty Bulk in KG": "Qty Bulk (kg)"
                         })
+                        # Normalize Qty header variants (e.g., 'Qty (ctn)') -> 'Qty (Ctn)'
+                        def _norm_key_local(s: str) -> str:
+                            return re.sub(r"[^a-z0-9]", "", str(s or "").lower())
+
+                        col_map_local = {_norm_key_local(c): c for c in df_out.columns}
+                        if "qtyctn" in col_map_local:
+                            orig = col_map_local["qtyctn"]
+                            if orig != "Qty (Ctn)":
+                                df_out = df_out.rename(columns={orig: "Qty (Ctn)"})
+
+                        # Remove enrichment columns for West outputs (keep them only in Combined)
+                        for _c in [
+                            "country",
+                            "brand",
+                            "sub_brand",
+                            "category",
+                            "big_category",
+                            "house",
+                            "pack_format",
+                            "machine_1",
+                        ]:
+                            if _c in df_out.columns:
+                                df_out = df_out.drop(columns=[_c])
+
                         results[sh] = df_out
                 except Exception as e:
                     report.append((sh, f"ERROR: {e}", 0))
@@ -612,9 +680,7 @@ elif section == "East":
                             error_report.append((selected_sheet, "No data found after processing."))
                         else:
                             for line, df in line_dfs.items():
-                                if "Region" not in df.columns:
-                                    df.insert(0, "Region", region)
-                                # Gabungkan df ke line yang sama
+                                # Keep df columns as produced by process_east_file (target columns)
                                 if line not in combined_line_dfs:
                                     combined_line_dfs[line] = [df]
                                 else:
@@ -637,6 +703,22 @@ elif section == "East":
 
             st.markdown("---")
             st.subheader("Download Output")
+            # Remove enrichment columns for East outputs (they are used only in Combined)
+            for lk, ldf in list(final_line_dfs.items()):
+                for _c in [
+                    "country",
+                    "brand",
+                    "sub_brand",
+                    "category",
+                    "big_category",
+                    "house",
+                    "pack_format",
+                    "machine_1",
+                ]:
+                    if _c in ldf.columns:
+                        ldf = ldf.drop(columns=[_c])
+                final_line_dfs[lk] = ldf
+
             excel_data = create_east_excel_download(final_line_dfs)
             st.download_button(
                 label="Download Excel File",
@@ -690,39 +772,95 @@ elif section == "Combined":
         # Baca sheet
         df_west = pd.read_excel(file_west, sheet_name="All_West", header=0, engine="openpyxl")
         df_east = pd.read_excel(file_east, sheet_name="All_East", header=0, engine="openpyxl")
-
-        # Required columns (case-insensitive)
-        required_cols = [
+        # Target combined column order
+        TARGET_COMBINED_COLS = [
             "Region", "Line", "SAP Article", "Description", "Pack Size", "Kg_TU",
-            "Qty (Ctn)", "Qty Bulk (kg)", "BIN", "Time Start", "Time Finish"
+            "Qty (Ctn)", "Qty Bulk (kg)", "BIN", "Time Start", "Time Finish",
+            "Release Time", "Release Week", "Release Ident", "Country", "Brand",
+            "Sub Brand", "Category", "Big Category", "House", "Pack Format", "Ouput"
         ]
 
-        def select_and_normalize(df):
-            col_map = {c.lower().strip(): c for c in df.columns}
-            out_cols = []
-            for req in required_cols:
-                found = None
-                for c in df.columns:
-                    if c.lower().strip() == req.lower().strip():
-                        found = c
-                        break
-                if found:
-                    out_cols.append(found)
-                else:
-                    out_cols.append(None)
-            selected = pd.DataFrame()
-            for req, col in zip(required_cols, out_cols):
-                if col is not None:
-                    selected[req] = df[col]
-                else:
-                    selected[req] = None
-            for tcol in ["Time Start", "Time Finish"]:
-                if tcol in selected.columns:
-                    selected[tcol] = pd.to_datetime(selected[tcol], errors="coerce").dt.date
-            return selected
+        def process_combined_file(df: pd.DataFrame, region_label: str) -> pd.DataFrame:
+            """Normalize columns from an All_West/All_East file and enrich from ZCORIN_MAP."""
+            def norm_key(s: str) -> str:
+                s = str(s or "").lower()
+                return re.sub(r"[^a-z0-9]", "", s)
 
-        df_west_sel = select_and_normalize(df_west)
-        df_east_sel = select_and_normalize(df_east)
+            col_map = {norm_key(c): c for c in df.columns}
+
+            def get_col(name):
+                k = norm_key(name)
+                return df[col_map[k]] if k in col_map else None
+
+            out = pd.DataFrame()
+            # Core columns to take from the sheet
+            sheet_fields = ["Line", "SAP Article", "Description", "Pack Size", "Kg_TU",
+                            "Qty (Ctn)", "Qty Bulk (kg)", "BIN", "Time Start", "Time Finish",
+                            "Release Time", "Release Week"]
+
+            for f in sheet_fields:
+                k = norm_key(f)
+                if k in col_map:
+                    out[f] = df[col_map[k]]
+                else:
+                    out[f] = None
+
+            # Ensure datetime -> date for Time Start/Finish/Release Time
+            for t in ["Time Start", "Time Finish", "Release Time"]:
+                if t in out.columns:
+                    out[t] = pd.to_datetime(out[t], errors="coerce")
+                    # keep as datetime for now; will convert to date later
+
+            # Compute Release Ident if Release Time exists
+            if "Release Time" in out.columns:
+                def rel_ident_fmt(x):
+                    if pd.notna(x):
+                        return f"{x.day}{x.month}{x.year}"
+                    return None
+                out["Release Ident"] = out["Release Time"].apply(rel_ident_fmt)
+            else:
+                out["Release Ident"] = None
+
+            # Enrich from ZCORIN_MAP using SAP Article/material code
+            def enrich_row(mat):
+                k = str(mat).strip()
+                info = ZCORIN_MAP.get(k, {}) if k else {}
+                return {
+                    "Country": info.get("country"),
+                    "Brand": info.get("brand"),
+                    "Sub Brand": info.get("sub_brand"),
+                    "Category": info.get("category"),
+                    "Big Category": info.get("big_category"),
+                    "House": info.get("house"),
+                    "Pack Format": info.get("pack_format"),
+                    "Ouput": info.get("output")
+                }
+
+            enrich_df = pd.DataFrame(list(map(enrich_row, out["SAP Article"].fillna(""))))
+            out = pd.concat([out.reset_index(drop=True), enrich_df.reset_index(drop=True)], axis=1)
+
+            # Region column set from the file source
+            out.insert(0, "Region", region_label)
+
+            # Normalize Time Start/Finish/Release Time to date (no time)
+            for t in ["Time Start", "Time Finish", "Release Time"]:
+                if t in out.columns:
+                    out[t] = pd.to_datetime(out[t], errors="coerce").dt.date
+
+            # Ensure final column order and missing columns
+            final = pd.DataFrame()
+            existing_map = {c.lower().strip(): c for c in out.columns}
+            for tc in TARGET_COMBINED_COLS:
+                key = tc.lower().strip()
+                if key in existing_map:
+                    final[tc] = out[existing_map[key]]
+                else:
+                    final[tc] = None
+
+            return final
+
+        df_west_sel = process_combined_file(df_west, "West")
+        df_east_sel = process_combined_file(df_east, "East")
         df_combined = pd.concat([df_west_sel, df_east_sel], ignore_index=True)
 
         st.success(f"Data digabungkan: {len(df_west_sel)} baris dari West, {len(df_east_sel)} baris dari East, total {len(df_combined)} baris.")

@@ -1,10 +1,8 @@
 import pandas as pd
 import streamlit as st
 from sqlalchemy import create_engine, text
+import io
 
-# =========================
-# PAGE
-# =========================
 st.set_page_config(page_title="Master Data (East)", layout="wide")
 st.title("Master Data (East)")
 
@@ -81,6 +79,20 @@ def get_all_materials() -> list:
             text(f"SELECT DISTINCT material FROM {TABLE} WHERE material IS NOT NULL ORDER BY material")
         ).fetchall()
     return [r[0] for r in rows if r and r[0] is not None]
+
+def convert_df_to_excel(df):
+    df_clean = df.copy()
+    cols_to_remove = ['id', 'updated_at']
+    df_clean = df_clean.drop(columns=[c for c in cols_to_remove if c in df_clean.columns])
+    
+    for col in df_clean.select_dtypes(include=['datetime64[ns, UTC]', 'datetimetz']).columns:
+        df_clean[col] = df_clean[col].dt.tz_localize(None)
+        
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df_clean.to_excel(writer, index=False, sheet_name='Database FG')
+    processed_data = output.getvalue()
+    return processed_data
 
 def insert_row(payload: dict):
     sql = text(f"""
@@ -401,11 +413,20 @@ else:
     st.caption("Upload Excel file to bulk insert new materials.")
 
 st.markdown("---")
-
-# =========================
-# DB PREVIEW
-# =========================
 st.subheader("Database Preview")
-df_db = load_db(limit=5000)
-st.dataframe(df_db, use_container_width=True)
-st.caption(f"Showing {len(df_db):,} rows")
+
+df_for_download = load_db(limit=10000)
+
+if not df_for_download.empty:
+    excel_data = convert_df_to_excel(df_for_download)
+    
+    st.download_button(
+        label="📥 Download Database as Excel",
+        data=excel_data,
+        file_name="Master_Data_East_Export.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+else:
+    st.warning("Database kosong, tidak ada data untuk diunduh.")
+
+st.dataframe(df_for_download, use_container_width=True)
