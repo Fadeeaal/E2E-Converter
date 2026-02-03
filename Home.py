@@ -24,10 +24,10 @@ st.markdown(
     """
     Welcome to the **E2E Dashboard** 👋  
 
-    Dashboard ini dirancang untuk mempermudah operasional tim Supply Chain dalam melakukan 
-    **data cleansing**, **konversi database**, hingga **planning consolidation**.
+    This dashboard is designed to streamline Supply Chain operations through 
+    **automated data cleansing**, **database conversion**, and **planning consolidation**.
 
-    👉 Silakan pilih fitur melalui **sidebar di sebelah kiri** untuk memulai.
+    👉 Please select a feature from the **sidebar on the left** to get started.
     """
 )
 
@@ -41,22 +41,22 @@ c1, c2, c3 = st.columns(3)
 with c1:
     st.subheader("📦 Delivery Plan")
     st.write(
-        "Ekstrak dan pembersihan data Delivery Plan dari berbagai sheet "
-        "untuk kebutuhan analisis supply dan planning."
+        "Extract and clean Delivery Plan data from multiple sheets "
+        "to support supply and planning analysis."
     )
 
 with c2:
     st.subheader("📤 Good Issue")
     st.write(
-        "Agregasi dan pembersihan data Good Issue (GI) agar siap "
-        "digunakan untuk pelaporan dan visualisasi Power BI."
+        "Aggregate and clean Good Issue (GI) data, ensuring it is "
+        "ready for reporting and Power BI visualization."
     )
 
 with c3:
-    st.subheader("📈 ROFO")
+    st.subheader("📈 ROFO Tool")
     st.write(
-        "Multi-file ROFO compiler (Local & Export) dengan logika M0–M3, "
-        "fitur penggabungan Primary Sales, dan download format Excel."
+        "Multi-file ROFO compiler (Local & Export) featuring M0–M3 logic, "
+        "Primary Sales consolidation, and automated Excel exports."
     )
 
 st.markdown("")
@@ -69,16 +69,16 @@ c4, c5 = st.columns(2)
 with c4:
     st.subheader("🧹 ZCORIN Tool")
     st.write(
-        "Solusi terpadu untuk data ZCORIN: Cleaner (transformasi data, "
-        "shelf life, release time) dan Converter (Master Data management "
-        "yang terintegrasi dengan NeonDB)."
+        "A unified solution for ZCORIN data: Cleaner (data transformation, "
+        "shelf life, and release time) and Converter (Master Data management "
+        "integrated with NeonDB)."
     )
 
 with c5:
     st.subheader("📊 DPS Tool")
     st.write(
-        "Converter data DPS (Local & Export) dengan fitur penggabungan otomatis "
-        "data Primary Sales untuk konsolidasi demand planning."
+        "DPS data converter for Local and Export modes, including automated "
+        "Primary Sales merging for centralized demand planning consolidation."
     )
 
 st.markdown("---")
