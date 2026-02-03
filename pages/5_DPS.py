@@ -8,9 +8,6 @@ from sqlalchemy import create_engine, text
 st.set_page_config(page_title="DPS Cleaner Data", layout="wide")
 st.title("DPS Cleaner Data")
 
-st.markdown("---")
-
-# UI for section selection
 section = st.radio(
     "Select Section",
     options=["West", "East", "Combined"],
@@ -745,16 +742,13 @@ elif section == "East":
         st.exception(e)
 
 elif section == "Combined":
-    st.header("Combine DPS West & East")
-    st.caption("Upload masing-masing file hasil DPS West dan DPS East yang sudah memiliki sheet All_West dan All_East.")
     uploaded_files = st.file_uploader(
-        "Upload 2 file Excel (.xlsx): 1 untuk West, 1 untuk East",
+        "Upload 2 file Excel (.xlsx): West & East",
         type=["xlsx"],
         accept_multiple_files=True,
         key="combined_multi"
     )
     if not uploaded_files or len(uploaded_files) < 2:
-        st.info("Upload dua file (West & East) untuk mulai proses combine.")
         st.stop()
     try:
         # Cari file mana West/East berdasarkan sheet di dalamnya
