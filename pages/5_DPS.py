@@ -751,7 +751,6 @@ elif section == "Combined":
     if not uploaded_files or len(uploaded_files) < 2:
         st.stop()
     try:
-        # Cari file mana West/East berdasarkan sheet di dalamnya
         file_west, file_east = None, None
         for f in uploaded_files:
             xls = pd.ExcelFile(f, engine="openpyxl")
