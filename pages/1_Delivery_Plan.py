@@ -50,7 +50,7 @@ if uploaded:
         st.download_button(
             label="Download hasil (Excel)",
             data=output,
-            file_name="DeliveryPlan_Output.xlsx",
+            file_name="Delivery Plan CS Output.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 else:

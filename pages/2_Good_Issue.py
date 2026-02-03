@@ -42,7 +42,7 @@ if uploaded:
 
         output = io.BytesIO()
         base_name = os.path.splitext(uploaded.name)[0]
-        out_name = f"{base_name}_vis.xlsx"
+        out_name = f"{base_name} Output.xlsx"
 
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
             result.to_excel(writer, index=False, sheet_name="vis")

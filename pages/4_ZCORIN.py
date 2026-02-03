@@ -163,7 +163,7 @@ else:
 
                 # Export to Excel
                 base_name = os.path.splitext(uploaded.name)[0]
-                out_name = f"{base_name}_vis.xlsx"
+                out_name = f"{base_name} Output.xlsx"
 
                 out_bytes = io.BytesIO()
                 with pd.ExcelWriter(out_bytes, engine="openpyxl") as writer:

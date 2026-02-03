@@ -173,7 +173,7 @@ with tab1:
                 if rofo_type == "Local":
                     ps = process_sheet_multi(uploaded_files, "PS_DRY", base_year, base_month)
                     ss = process_sheet_multi(uploaded_files, "SS_DRY", base_year, base_month)
-                    st.success("Selesai (Local Mode)!")
+                    st.success("Selesai!")
                     st.subheader("PS DRY (Primary Sales)")
                     st.dataframe(ps, use_container_width=True)
                     st.subheader("SS DRY (Secondary Sales)")
@@ -182,7 +182,7 @@ with tab1:
                     with pd.ExcelWriter(output, engine="openpyxl") as writer:
                         ps.to_excel(writer, sheet_name="PS_DRY", index=False)
                         ss.to_excel(writer, sheet_name="SS_DRY", index=False)
-                    st.download_button("📥 Download Local ROFO", output.getvalue(), f"ROFO_Local_{base_year}.xlsx")
+                    st.download_button("📥 Download Local ROFO", output.getvalue(), f"ROFO Local {base_month} {base_year} Output.xlsx")
                 else:
                     export_df = process_export_rofo(uploaded_files, base_year, base_month)
                     st.success("Selesai (Export Mode)!")
@@ -190,7 +190,7 @@ with tab1:
                     output = io.BytesIO()
                     with pd.ExcelWriter(output, engine="openpyxl") as writer:
                         export_df.to_excel(writer, sheet_name="ROFO_Export", index=False)
-                    st.download_button("📥 Download Export ROFO", output.getvalue(), f"ROFO_Export_{base_year}.xlsx")
+                    st.download_button("📥 Download Export ROFO", output.getvalue(), f"ROFO Export {base_month} {base_year} Output.xlsx")
 
 with tab2:
     st.header("Combined Primary Sales & Export")
@@ -225,6 +225,6 @@ with tab2:
                 out_comb = io.BytesIO()
                 with pd.ExcelWriter(out_comb, engine="openpyxl") as writer:
                     final_combined.to_excel(writer, index=False, sheet_name="Combined_PS_Export")
-                st.download_button("Download Combined ROFO", out_comb.getvalue(), "ROFO_Combined_Primary_Export.xlsx")
+                st.download_button("Download Combined ROFO", out_comb.getvalue(), f"ROFO Combined - Local Export {base_month} {base_year} Output.xlsx")
         else:
             st.warning("Please upload both converter result files (Local and Export).")

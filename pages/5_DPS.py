@@ -524,7 +524,6 @@ if section in ["West", "East"]:
 
 
 if section == "West":
-    # ...existing code for West...
     xls = pd.ExcelFile(uploaded, engine="openpyxl")
     sheet_options = xls.sheet_names
     selected_sheets = st.multiselect(
@@ -621,7 +620,7 @@ if section == "West":
         m0_name = month_names[(int(m0)-1)%12]
         m1_name = month_names[(int(m1)-1)%12]
         m2_name = month_names[(int(m2)-1)%12]
-        file_name = f"DPS_WEST_{m0_name}{m1_name}{m2_name}.xlsx"
+        file_name = f"DPS WEST {m0_name} Output.xlsx"
 
         st.download_button(
             "Download Output (Excel)",
@@ -631,7 +630,6 @@ if section == "West":
         )
 
 elif section == "East":
-    # ...existing code for East...
     try:
         @st.cache_data
         def get_sheet_names(file_bytes):
@@ -720,7 +718,7 @@ elif section == "East":
             st.download_button(
                 label="Download Excel File",
                 data=excel_data,
-                file_name="DPS_East_Output.xlsx",
+                file_name=f"DPS East {m0_name} Output.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
@@ -869,7 +867,7 @@ elif section == "Combined":
         st.download_button(
             label="Download Combined Excel",
             data=output,
-            file_name="Combined_DPS.xlsx",
+            file_name=f"DPS Total East West {m0_name} Output.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
     except Exception as e:
