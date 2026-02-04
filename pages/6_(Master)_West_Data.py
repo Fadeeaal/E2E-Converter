@@ -1,14 +1,14 @@
-import pandas as pd
-import streamlit as st
 import io
-
-st.set_page_config(page_title="Master Data (West)", layout="wide")
-st.title("Master Data (West)")
-
 import pandas as pd
 import streamlit as st
 from sqlalchemy import create_engine, text
 
+st.set_page_config(page_title="FG Master Data", layout="wide")
+st.title("FG Master Data — fg_master_data (All Regions)")
+
+# =========================
+# DB Engine
+# =========================
 @st.cache_resource
 def get_engine():
     p = st.secrets["postgres"]
@@ -21,407 +21,119 @@ def get_engine():
 
 engine = get_engine()
 
+# =========================
+# Column schema (fg_master_data)
+# =========================
 DB_COLS = [
-    "material",
-    "material_description",
+    "sku_code",
+    "description",
     "country",
     "brand",
     "sub_brand",
     "category",
     "big_category",
     "house",
+    "region",
+    "line",
     "size",
     "pcs_cb",
     "kg_cb",
+    "speed",
     "pack_format",
-    "size_format",
-    "insource_or_outsource",    
+    "output",
 ]
 
+# Excel headers -> DB columns
+# (Silakan sesuaikan header excel kamu di sini)
 EXCEL_MAPPING = {
-    "Material": "material",
-    "Material Description": "material_description",
+    "SKU Code": "sku_code",
+    "Description": "description",
     "Country": "country",
     "Brand": "brand",
-    "Subbrand": "sub_brand",
+    "Sub Brand": "sub_brand",
     "Category": "category",
     "Big Category": "big_category",
     "House": "house",
+    "Region": "region",
+    "Line": "line",
     "Size": "size",
-    "Pcs/cb": "pcs_cb",
+    "Pcs/CB": "pcs_cb",
     "KG/CB": "kg_cb",
-    "Pack format": "pack_format",
-    "Size format": "size_format",
-    "Insource / Outsource": "insource_or_outsource",
-    
+    "Speed": "speed",
+    "Pack Format": "pack_format",
+    "Output": "output",
 }
 
-def load_db(limit: int = 5000) -> pd.DataFrame:
+# (opsional) alias header lama supaya file excel lama tetap kebaca
+EXCEL_ALIASES = {
+    "Material": "SKU Code",
+    "Material Description": "Description",
+    "Subbrand": "Sub Brand",
+    "Pcs/cb": "Pcs/CB",
+    "Pack format": "Pack Format",
+}
+
+def _norm_str(x):
+    if x is None:
+        return None
+    s = str(x).strip()
+    if s.lower() in ["nan", "none", "nat", ""]:
+        return None
+    return s
+
+def _coerce_number(x):
+    if x is None:
+        return None
+    if isinstance(x, (int, float)) and pd.notna(x):
+        return float(x)
+    s = str(x).strip()
+    if s.lower() in ["nan", "none", "nat", ""]:
+        return None
+    s = s.replace(",", ".")
+    try:
+        return float(s)
+    except Exception:
+        return None
+
+# =========================
+# DB helpers
+# =========================
+def load_db(limit: int = 20000) -> pd.DataFrame:
     with engine.connect() as conn:
         return pd.read_sql(
-            text("SELECT * FROM zcorin_converter ORDER BY id DESC LIMIT :lim"),
+            text("""
+                SELECT *
+                FROM fg_master_data
+                ORDER BY region, line, sku_code
+                LIMIT :lim
+            """),
             conn,
             params={"lim": limit},
         )
 
-def get_row_by_material(material: str):
-    with engine.connect() as conn:
-        row = conn.execute(
-            text("SELECT * FROM zcorin_converter WHERE material = :m LIMIT 1"),
-            {"m": material},
-        ).mappings().first()
-    return dict(row) if row else None
-
-def convert_df_to_excel(df):
+def convert_df_to_excel(df: pd.DataFrame) -> bytes:
     df_clean = df.copy()
-    cols_to_remove = ['id', 'updated_at', 'created_at']
+
+    # drop typical audit cols if exist
+    cols_to_remove = ["id", "created_at", "updated_at"]
     df_clean = df_clean.drop(columns=[c for c in cols_to_remove if c in df_clean.columns])
-    
-    for col in df_clean.select_dtypes(include=['datetime64[ns, UTC]', 'datetimetz']).columns:
-        df_clean[col] = df_clean[col].dt.tz_localize(None)
-        
+
     output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df_clean.to_excel(writer, index=False, sheet_name='Database FG')
-    processed_data = output.getvalue()
-    return processed_data
-
-def insert_row(payload: dict):
-    sql = text("""
-    INSERT INTO zcorin_converter
-    (material, material_description, country, brand, sub_brand, category, big_category, house, size,
-     pcs_cb, kg_cb, pack_format, size_format, insource_or_outsource, updated_at)
-    VALUES
-    (:material, :material_description, :country, :brand, :sub_brand, :category, :big_category, :house, :size,
-     :pcs_cb, :kg_cb, :pack_format, :size_format, :insource_or_outsource, NOW())
-    """)
-    with engine.begin() as conn:
-        conn.execute(sql, payload)
-
-def update_only_changed(material: str, old_row: dict, new_values: dict):
-    changed = {}
-    for k in DB_COLS:
-        if k == "material":
-            continue
-        old_v = old_row.get(k)
-        new_v = new_values.get(k)
-        if isinstance(old_v, str):
-            old_v = old_v.strip()
-        if isinstance(new_v, str):
-            new_v = new_v.strip()
-        if old_v != new_v:
-            changed[k] = new_v
-    if not changed:
-        return 0, []
-    set_parts = [f"{col} = :{col}" for col in changed.keys()]
-    sql = text(f"""
-        UPDATE zcorin_converter
-        SET {", ".join(set_parts)}, updated_at = NOW()
-        WHERE material = :material
-    """)
-    params = {"material": material, **changed}
-    with engine.begin() as conn:
-        res = conn.execute(sql, params)
-    return res.rowcount, list(changed.keys())
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df_clean.to_excel(writer, index=False, sheet_name="Database FG")
+    return output.getvalue()
 
 def excel_to_db_df(uploaded) -> pd.DataFrame:
     df = pd.read_excel(uploaded, sheet_name="Database FG", engine="openpyxl")
-    missing = [c for c in EXCEL_MAPPING.keys() if c not in df.columns]
-    if missing:
-        raise ValueError(f"Kolom Excel ini tidak ditemukan: {missing}")
-    df = df.rename(columns=EXCEL_MAPPING)
-    df = df[list(EXCEL_MAPPING.values())].copy()
+
+    # normalize legacy headers (optional)
+    rename_alias = {}
     for c in df.columns:
-        df[c] = df[c].astype(str).str.strip()
-        df.loc[df[c].isin(["nan", "None", "NaT", ""]), c] = None
-    df = df[df["material"].notna()].copy()
-    df["material"] = df["material"].astype(str).str.strip()
-    return df
+        if c in EXCEL_ALIASES:
+            rename_alias[c] = EXCEL_ALIASES[c]
+    if rename_alias:
+        df = df.rename(columns=rename_alias)
 
-def get_existing_materials_set() -> set:
-    with engine.connect() as conn:
-        rows = conn.execute(text("SELECT material FROM zcorin_converter")).fetchall()
-    return set(r[0] for r in rows if r and r[0] is not None)
-
-# =========================
-# UI SECTION
-# =========================
-
-# Mode selector (Edit/Add)
-mode = st.radio(
-    "Select Mode",
-    options=["✏️ Edit Existing", "➕ Add New"],
-    horizontal=True,
-    help="Switch between editing existing records or adding new ones"
-)
-
-st.markdown("---")
-
-# tampilkan flash message jika ada (setelah update)
-if st.session_state.get("update_flash"):
-    st.success(st.session_state.pop("update_flash"))
-
-# =========================
-# EDIT MODE
-# =========================
-if mode == "✏️ Edit Existing":
-    st.markdown("### Search & Edit")
-    # Get all materials for dropdown
-    with st.spinner("Loading materials..."):
-        with engine.connect() as conn:
-            rows = conn.execute(text("SELECT DISTINCT material FROM zcorin_converter WHERE material IS NOT NULL ORDER BY material")).fetchall()
-        all_materials = [r[0] for r in rows if r and r[0] is not None]
-
-    if all_materials:
-        search_material = st.selectbox(
-            "Select Material",
-            options=["-- Select --"] + all_materials,
-            index=0,
-            help="Select a material to edit"
-        )
-        if search_material == "-- Select --":
-            search_material = None
-    else:
-        st.warning("No materials in database yet.")
-        search_material = None
-
-    if search_material:
-        row = get_row_by_material(search_material)
-        if row:
-            st.success(f"Found Material **{search_material}**")
-            with st.form("edit_existing"):
-                c1, c2 = st.columns(2)
-                with c1:
-                    st.text_input("Material *", value=row.get("material"), disabled=True)
-                    material_description = st.text_input("Material Description", value=row.get("material_description") or "")
-                    country = st.text_input("Country", value=row.get("country") or "")
-                    brand = st.text_input("Brand", value=row.get("brand") or "")
-                    sub_brand = st.text_input("Subbrand", value=row.get("sub_brand") or "")
-                    category = st.text_input("Category", value=row.get("category") or "")
-                    big_category = st.text_input("Big Category", value=row.get("big_category") or "")
-                with c2:
-                    house = st.text_input("House", value=row.get("house") or "")
-                    size = st.text_input("Size", value=row.get("size") or "")
-                    pcs_cb = st.text_input("Pcs/cb", value=row.get("pcs_cb") or "")
-                    kg_cb = st.text_input("KG/CB", value=row.get("kg_cb") or "")
-                    pack_format = st.text_input("Pack format", value=row.get("pack_format") or "")
-                    size_format = st.text_input("Size format", value=row.get("size_format") or "")
-                    insource_or_outsource = st.text_input("Insource / Outsource", value=row.get("insource_or_outsource") or "")
-                    
-
-                submitted = st.form_submit_button("Update Material")
-                if submitted:
-                    new_values = {
-                        "material": row["material"],
-                        "material_description": material_description.strip() or None,
-                        "country": country.strip() or None,
-                        "brand": brand.strip() or None,
-                        "sub_brand": sub_brand.strip() or None,
-                        "category": category.strip() or None,
-                        "big_category": big_category.strip() or None,
-                        "house": house.strip() or None,
-                        "size": size.strip() or None,
-                        "pcs_cb": pcs_cb.strip() or None,
-                        "kg_cb": kg_cb.strip() or None,
-                        "pack_format": pack_format.strip() or None,
-                        "size_format": size_format.strip() or None,
-                        "insource_or_outsource": insource_or_outsource.strip() or None,
-                    }
-                    try:
-                        count, changed_cols = update_only_changed(row["material"], row, new_values)
-                        if count == 0:
-                            st.info("No changes detected (no update executed).")
-                        else:
-                            changed_items = []
-                            for col in changed_cols:
-                                old_v = row.get(col)
-                                new_v = new_values.get(col)
-                                changed_items.append(f"{col}: '{old_v}' -> '{new_v}'")
-                            st.session_state["update_flash"] = (
-                                f"Material {row['material']} updated successfully! Changes: "
-                                + "; ".join(changed_items)
-                            )
-                            st.rerun()
-                    except Exception as e:
-                        st.error(f"Gagal update: {e}")
-        else:
-            st.warning("Material not found in database.")
-
-# =========================
-# ADD MODE
-# =========================
-elif mode == "➕ Add New":
-    st.markdown("### ➕ Add New Material")
-    with st.form("add_new_form"):
-        c1, c2 = st.columns(2)
-        with c1:
-            new_material = st.text_input("Material *", placeholder="Contoh: 1234567").strip()
-            material_description = st.text_input("Material Description")
-            country = st.text_input("Country")
-            brand = st.text_input("Brand")
-            sub_brand = st.text_input("Subbrand")
-            category = st.text_input("Category")
-            big_category = st.text_input("Big Category")
-        with c2:
-            house = st.text_input("House")
-            size = st.text_input("Size")
-            pcs_cb = st.text_input("Pcs/cb")
-            kg_cb = st.text_input("KG/CB")
-            pack_format = st.text_input("Pack format")
-            size_format = st.text_input("Size format")
-            insource_or_outsource = st.text_input("Insource / Outsource")
-            
-
-        submitted = st.form_submit_button("Insert New Material")
-        if submitted:
-            if not new_material:
-                st.warning("Material wajib diisi.")
-            else:
-                # Cek duplikat
-                if get_row_by_material(new_material):
-                    st.error(f"Material {new_material} sudah ada di database. Gunakan Edit mode untuk mengubah.")
-                else:
-                    payload = {
-                        "material": new_material,
-                        "material_description": material_description.strip() or None,
-                        "country": country.strip() or None,
-                        "brand": brand.strip() or None,
-                        "sub_brand": sub_brand.strip() or None,
-                        "category": category.strip() or None,
-                        "big_category": big_category.strip() or None,
-                        "house": house.strip() or None,
-                        "size": size.strip() or None,
-                        "pcs_cb": pcs_cb.strip() or None,
-                        "kg_cb": kg_cb.strip() or None,
-                        "pack_format": pack_format.strip() or None,
-                        "size_format": size_format.strip() or None,
-                        "insource_or_outsource": insource_or_outsource.strip() or None,
-                    }
-                    try:
-                        insert_row(payload)
-                        st.success("Insert berhasil.")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Gagal insert: {e}")
-
-@st.cache_resource
-def get_engine():
-    p = st.secrets["postgres"]
-    url = (
-        f"postgresql+psycopg2://{p['user']}:{p['password']}"
-        f"@{p['host']}:{p['port']}/{p['database']}"
-        f"?sslmode=require"
-    )
-    return create_engine(url, pool_pre_ping=True)
-
-engine = get_engine()
-
-DB_COLS = [
-    "material",
-    "material_description",
-    "country",
-    "brand",
-    "sub_brand",
-    "category",
-    "big_category",
-    "house",
-    "size",
-    "pcs_cb",
-    "kg_cb",
-    "pack_format",
-    "size_format",
-    "insource_or_outsource",
-    "machine_1",
-]
-
-EXCEL_MAPPING = {
-    "Material": "material",
-    "Material Description": "material_description",
-    "Country": "country",
-    "Brand": "brand",
-    "Subbrand": "sub_brand",
-    "Category": "category",
-    "Big Category": "big_category",
-    "House": "house",
-    "Size": "size",
-    "Pcs/cb": "pcs_cb",
-    "KG/CB": "kg_cb",
-    "Pack format": "pack_format",
-    "Size format": "size_format",
-    "Insource / Outsource": "insource_or_outsource",
-    "Machine 1": "machine_1",
-}
-
-def load_db(limit: int = 5000) -> pd.DataFrame:
-    with engine.connect() as conn:
-        return pd.read_sql(
-            text("SELECT * FROM zcorin_converter ORDER BY id DESC LIMIT :lim"),
-            conn,
-            params={"lim": limit},
-        )
-
-def get_row_by_material(material: str):
-    with engine.connect() as conn:
-        row = conn.execute(
-            text("SELECT * FROM zcorin_converter WHERE material = :m LIMIT 1"),
-            {"m": material},
-        ).mappings().first()
-    return dict(row) if row else None
-
-def insert_row(payload: dict):
-    sql = text("""
-    INSERT INTO zcorin_converter
-    (material, material_description, country, brand, sub_brand, category, big_category, house, size,
-     pcs_cb, kg_cb, pack_format, size_format, insource_or_outsource, machine_1, updated_at)
-    VALUES
-    (:material, :material_description, :country, :brand, :sub_brand, :category, :big_category, :house, :size,
-     :pcs_cb, :kg_cb, :pack_format, :size_format, :insource_or_outsource, :machine_1, NOW())
-    """)
-    with engine.begin() as conn:
-        conn.execute(sql, payload)
-
-def update_only_changed(material: str, old_row: dict, new_values: dict):
-    """
-    Update hanya kolom yang berubah.
-    old_row: row existing dari DB
-    new_values: dict kolom->nilai baru (kolom DB_COLS)
-    """
-    changed = {}
-    for k in DB_COLS:
-        if k == "material":
-            continue
-        old_v = old_row.get(k)
-        new_v = new_values.get(k)
-
-        # normalize whitespace for string compare
-        if isinstance(old_v, str):
-            old_v = old_v.strip()
-        if isinstance(new_v, str):
-            new_v = new_v.strip()
-
-        if old_v != new_v:
-            changed[k] = new_v
-
-    if not changed:
-        return 0, []
-
-    # build dynamic UPDATE query
-    set_parts = [f"{col} = :{col}" for col in changed.keys()]
-    sql = text(f"""
-        UPDATE zcorin_converter
-        SET {", ".join(set_parts)}, updated_at = NOW()
-        WHERE material = :material
-    """)
-
-    params = {"material": material, **changed}
-
-    with engine.begin() as conn:
-        res = conn.execute(sql, params)
-
-    return res.rowcount, list(changed.keys())
-
-def excel_to_db_df(uploaded) -> pd.DataFrame:
-    df = pd.read_excel(uploaded, sheet_name="Database FG", engine="openpyxl")
     missing = [c for c in EXCEL_MAPPING.keys() if c not in df.columns]
     if missing:
         raise ValueError(f"Kolom Excel ini tidak ditemukan: {missing}")
@@ -429,197 +141,236 @@ def excel_to_db_df(uploaded) -> pd.DataFrame:
     df = df.rename(columns=EXCEL_MAPPING)
     df = df[list(EXCEL_MAPPING.values())].copy()
 
-    # Normalize: strip + convert NaN -> None
+    # normalize strings
     for c in df.columns:
-        df[c] = df[c].astype(str).str.strip()
-        df.loc[df[c].isin(["nan", "None", "NaT", ""]), c] = None
+        df[c] = df[c].apply(_norm_str)
 
-    # material wajib ada
-    df = df[df["material"].notna()].copy()
-    df["material"] = df["material"].astype(str).str.strip()
+    # sku_code wajib
+    df = df[df["sku_code"].notna()].copy()
+    df["sku_code"] = df["sku_code"].astype(str).str.strip()
+
+    # region wajib (karena table fg_master_data punya region)
+    if "region" not in df.columns or df["region"].isna().any():
+        raise ValueError("Kolom 'Region' wajib diisi untuk semua baris (WEST/EAST/dll).")
+
+    # coerce numeric fields
+    for nc in ["pcs_cb", "kg_cb", "speed"]:
+        if nc in df.columns:
+            df[nc] = df[nc].apply(_coerce_number)
 
     return df
 
-def get_existing_materials_set() -> set:
+def fetch_existing_map(keys: list[tuple[str, str | None]]) -> dict:
+    """
+    keys: list of (sku_code, region)
+    Return: {(sku_code, region): row_dict}
+    """
+    existing_map = {}
+    if not keys:
+        return existing_map
+
+    # de-dup
+    keys = list({(str(s).strip(), None if r is None else str(r).strip()) for s, r in keys})
+
+    # Query in chunks to avoid huge IN
+    chunk_size = 800
     with engine.connect() as conn:
-        rows = conn.execute(text("SELECT material FROM zcorin_converter")).fetchall()
-    return set(r[0] for r in rows if r and r[0] is not None)
+        for i in range(0, len(keys), chunk_size):
+            chunk = keys[i:i + chunk_size]
 
-st.subheader("Bulk Upload Excel")
+            # Build a VALUES table for composite key join (safer than IN tuples in some DBs)
+            # Example: VALUES ('A','WEST'), ('B','EAST')
+            values_sql = ", ".join(
+                [f"(:s{i+j}, :r{i+j})" for j in range(len(chunk))]
+            )
+            params = {}
+            for j, (sku, reg) in enumerate(chunk):
+                params[f"s{i+j}"] = sku
+                params[f"r{i+j}"] = reg
 
-uploaded = st.file_uploader("Upload your Master Data(.xlsx)", type=["xlsx"])
+            sql_fetch = text(f"""
+                SELECT m.*
+                FROM fg_master_data m
+                JOIN (VALUES {values_sql}) AS v(sku_code, region)
+                  ON m.sku_code = v.sku_code AND m.region = v.region
+            """)
+            rows = conn.execute(sql_fetch, params).mappings().all()
+            for r in rows:
+                existing_map[(str(r["sku_code"]).strip(), str(r["region"]).strip())] = dict(r)
+
+    return existing_map
+
+# =========================
+# UI — Bulk Upload
+# =========================
+st.subheader("Bulk Upload Excel (All Regions)")
+
+uploaded = st.file_uploader("Upload Excel Master Data (.xlsx) — sheet name: 'Database FG'", type=["xlsx"])
 
 if uploaded:
     try:
         df_up = excel_to_db_df(uploaded)
 
-        st.write("Preview (top 20):")
-        st.dataframe(df_up.head(20), use_container_width=True)
-        
+        st.write("Preview (top 30):")
+        st.dataframe(df_up.head(30), use_container_width=True)
+
         total_rows = len(df_up)
         st.caption(f"Total rows in file: {total_rows:,}")
-        
+
         if st.button("Upload to DB (Insert New & Update Existing)"):
             with st.spinner("Analyzing data differences..."):
-                uploaded_materials = df_up["material"].unique().tolist()
-                
-                # 2. Ambil data existing dari DB untuk material yang ada di Excel saja
-                #    (Menggunakan tuple untuk query IN)
-                if not uploaded_materials:
-                    st.warning("File Excel kosong atau tidak ada kolom material.")
-                    st.stop()
-                    
-                existing_map = {}
-                
-                # Batch fetch jika datanya banyak (chunking) agar tidak error query too long
-                chunk_size = 1000
-                
-                for i in range(0, len(uploaded_materials), chunk_size):
-                    chunk = uploaded_materials[i:i + chunk_size]
-                    if not chunk: continue
-                    
-                    # Convert list to tuple string for SQL IN clause
-                    # Handle single item tuple syntax issues
-                    if len(chunk) == 1:
-                        ids_str = f"('{chunk[0]}')"
-                    else:
-                        ids_str = str(tuple(chunk))
-                    
-                    sql_fetch = text(f"SELECT * FROM zcorin_converter WHERE material IN {ids_str}")
-                    
-                    with engine.connect() as conn:
-                        rows = conn.execute(sql_fetch).mappings().all()
-                        for r in rows:
-                            existing_map[r['material']] = dict(r)
-                
+                # key = (sku_code, region)
+                df_up["region"] = df_up["region"].astype(str).str.strip().str.upper()
+                df_up["sku_code"] = df_up["sku_code"].astype(str).str.strip()
+
+                keys = list(zip(df_up["sku_code"], df_up["region"]))
+                existing_map = fetch_existing_map(keys)
+
                 to_insert = []
                 to_update = []
                 skipped_count = 0
-                
-                check_cols = [c for c in DB_COLS if c != 'material']
-                
-                for idx, row in df_up.iterrows():
-                    mat = row['material']
-                    # Ubah row pandas jadi dict bersih
+
+                check_cols = [c for c in DB_COLS if c != "sku_code"]  # region is included here (but key is sku+region)
+
+                for _, row in df_up.iterrows():
+                    sku = str(row["sku_code"]).strip()
+                    reg = str(row["region"]).strip().upper()
                     row_dict = row.to_dict()
 
-                    if mat not in existing_map:
-                        # CASE 1: Material Belum Ada -> INSERT
+                    key = (sku, reg)
+                    if key not in existing_map:
                         to_insert.append(row_dict)
-                    else:
-                        # CASE 2: Material Sudah Ada -> CEK PERBEDAAN
-                        db_row = existing_map[mat]
-                        is_different = False
-                        
-                        for col in check_cols:
-                            # Normalisasi value excel vs db untuk perbandingan
-                            val_excel = row_dict.get(col)
-                            val_db = db_row.get(col)
+                        continue
 
-                            # Handle None/String mismatch
-                            str_excel = str(val_excel).strip() if val_excel is not None else ""
-                            str_db = str(val_db).strip() if val_db is not None else ""
-                            
-                            if str_excel != str_db:
+                    db_row = existing_map[key]
+
+                    # compare all non-key cols (exclude sku_code; region part of key so also exclude)
+                    is_different = False
+                    for col in [c for c in DB_COLS if c not in ["sku_code", "region"]]:
+                        val_excel = row_dict.get(col)
+                        val_db = db_row.get(col)
+
+                        if col in ["pcs_cb", "kg_cb", "speed"]:
+                            ve = _coerce_number(val_excel)
+                            vd = _coerce_number(val_db)
+                            if ve != vd:
                                 is_different = True
-                                break # Ada 1 beda cukup untuk trigger update
-                        
-                        if is_different:
-                            to_update.append(row_dict)
+                                break
                         else:
-                            skipped_count += 1
-                            
+                            se = "" if val_excel is None else str(val_excel).strip()
+                            sd = "" if val_db is None else str(val_db).strip()
+                            if se != sd:
+                                is_different = True
+                                break
+
+                    if is_different:
+                        to_update.append(row_dict)
+                    else:
+                        skipped_count += 1
+
+            # INSERT
             msg_insert = ""
-            msg_update = ""   
-            
+            msg_update = ""
+
             if to_insert:
                 insert_sql = text("""
-                    INSERT INTO zcorin_converter
-                    (material, material_description, country, brand, sub_brand, category, big_category, house, size,
-                     pcs_cb, kg_cb, pack_format, size_format, insource_or_outsource, machine_1, updated_at)
+                    INSERT INTO fg_master_data
+                    (sku_code, description, pcs_cb, kg_cb, size, country, brand, sub_brand,
+                     category, big_category, house, region, speed, pack_format, line, output)
                     VALUES
-                    (:material, :material_description, :country, :brand, :sub_brand, :category, :big_category, :house, :size,
-                     :pcs_cb, :kg_cb, :pack_format, :size_format, :insource_or_outsource, :machine_1, NOW())
+                    (:sku_code, :description, :pcs_cb, :kg_cb, :size, :country, :brand, :sub_brand,
+                     :category, :big_category, :house, :region, :speed, :pack_format, :line, :output)
                 """)
                 try:
                     with engine.begin() as conn:
                         conn.execute(insert_sql, to_insert)
-                    msg_insert = f"✅ Sukses Insert: {len(to_insert)} data baru."
+                    msg_insert = f"✅ Insert: {len(to_insert)} row baru."
                 except Exception as e:
                     st.error(f"Error Insert: {e}")
 
-            # Eksekusi Update
+            # UPDATE (key = sku_code + region)
             if to_update:
                 update_sql = text("""
-                    UPDATE zcorin_converter
-                    SET 
-                        material_description = :material_description,
+                    UPDATE fg_master_data
+                    SET
+                        description = :description,
+                        pcs_cb = :pcs_cb,
+                        kg_cb = :kg_cb,
+                        size = :size,
                         country = :country,
                         brand = :brand,
                         sub_brand = :sub_brand,
                         category = :category,
                         big_category = :big_category,
                         house = :house,
-                        size = :size,
-                        pcs_cb = :pcs_cb,
-                        kg_cb = :kg_cb,
+                        speed = :speed,
                         pack_format = :pack_format,
-                        size_format = :size_format,
-                        insource_or_outsource = :insource_or_outsource,
-                        machine_1 = :machine_1,
-                        updated_at = NOW()
-                    WHERE material = :material
+                        line = :line,
+                        output = :output
+                    WHERE sku_code = :sku_code
+                      AND region = :region
                 """)
                 try:
                     with engine.begin() as conn:
                         conn.execute(update_sql, to_update)
-                    msg_update = f"✏️ Sukses Update: {len(to_update)} data yang berubah."
+                    msg_update = f"✏️ Update: {len(to_update)} row berubah."
                 except Exception as e:
                     st.error(f"Error Update: {e}")
-                    
+
             st.success("Upload selesai.")
-            if msg_insert: st.write(msg_insert)
-            if msg_update: st.write(msg_update)
+            if msg_insert:
+                st.write(msg_insert)
+            if msg_update:
+                st.write(msg_update)
             if skipped_count > 0:
-                st.info(f"Skipped: {skipped_count} data (karena tidak ada perubahan).")
-            
-            # Refresh halaman agar tabel terupdate
+                st.info(f"Skipped: {skipped_count} row (tidak ada perubahan).")
+
             if to_insert or to_update:
-                import time
-                time.sleep(1)
                 st.rerun()
-        
+
     except Exception as e:
         st.error(f"Gagal memproses file: {e}")
 else:
-    st.caption("Upload Excel file for bulk upload.")
+    st.caption("Upload Excel untuk bulk upload (Insert & Update) untuk seluruh region.")
 
+# =========================
+# Preview + Download
+# =========================
 st.markdown("---")
-st.subheader("Database Preview")
+st.subheader("Database Preview (All Regions)")
 
-df_for_download = load_db(limit=10000)
+limit = st.number_input("Preview limit", min_value=100, max_value=200000, value=20000, step=1000)
+df_for_download = load_db(limit=int(limit))
 
-if not df_for_download.empty:
-    excel_data = convert_df_to_excel(df_for_download)
-    
-    st.download_button(
-        label="📥 Download Database as Excel",
-        data=excel_data,
-        file_name="Master_Data_West_Export.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
-else:
-    st.warning("Database kosong, tidak ada data untuk diunduh.")
+c1, c2 = st.columns([1, 2])
+with c1:
+    st.metric("Rows (Preview)", len(df_for_download))
 
-st.dataframe(df_for_download, use_container_width=True)
+with c2:
+    if not df_for_download.empty:
+        excel_data = convert_df_to_excel(df_for_download)
+        st.download_button(
+            label="📥 Download Preview as Excel",
+            data=excel_data,
+            file_name="FG_Master_Data_Export.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+    else:
+        st.warning("Database kosong, tidak ada data untuk diunduh.")
 
-st.sidebar.subheader("⚠️ Danger Zone")
-confirm = st.sidebar.checkbox("Yes, I want to delete all data (TRUNCATE).")
-if st.sidebar.button("TRUNCATE (clear all data)") and confirm:
+st.dataframe(df_for_download, use_container_width=True, height=520)
+
+# =========================
+# Danger Zone (ALL DATA)
+# =========================
+st.sidebar.subheader("⚠️ Danger Zone (ALL DATA)")
+st.sidebar.caption("Ini akan menghapus SEMUA baris di fg_master_data.")
+confirm = st.sidebar.checkbox("Yes, I want to delete ALL data in fg_master_data.")
+if st.sidebar.button("DELETE ALL (truncate fg_master_data)") and confirm:
     try:
         with engine.begin() as conn:
-            conn.execute(text("TRUNCATE TABLE zcorin_converter RESTART IDENTITY CASCADE"))
-        st.sidebar.success("Table cleared.")
+            conn.execute(text("TRUNCATE TABLE fg_master_data"))
+        st.sidebar.success("All data cleared (TRUNCATE).")
         st.rerun()
     except Exception as e:
-        st.sidebar.error(f"Failed to truncate table: {e}")
+        st.sidebar.error(f"Failed to truncate: {e}")
