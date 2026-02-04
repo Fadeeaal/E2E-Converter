@@ -35,8 +35,7 @@ DB_COLS = [
     "kg_cb",
     "pack_format",
     "size_format",
-    "insource_or_outsource",
-    "machine_1",
+    "insource_or_outsource",    
 ]
 
 EXCEL_MAPPING = {
@@ -54,7 +53,7 @@ EXCEL_MAPPING = {
     "Pack format": "pack_format",
     "Size format": "size_format",
     "Insource / Outsource": "insource_or_outsource",
-    "Machine 1": "machine_1",
+    
 }
 
 def load_db(limit: int = 5000) -> pd.DataFrame:
@@ -91,10 +90,10 @@ def insert_row(payload: dict):
     sql = text("""
     INSERT INTO zcorin_converter
     (material, material_description, country, brand, sub_brand, category, big_category, house, size,
-     pcs_cb, kg_cb, pack_format, size_format, insource_or_outsource, machine_1, updated_at)
+     pcs_cb, kg_cb, pack_format, size_format, insource_or_outsource, updated_at)
     VALUES
     (:material, :material_description, :country, :brand, :sub_brand, :category, :big_category, :house, :size,
-     :pcs_cb, :kg_cb, :pack_format, :size_format, :insource_or_outsource, :machine_1, NOW())
+     :pcs_cb, :kg_cb, :pack_format, :size_format, :insource_or_outsource, NOW())
     """)
     with engine.begin() as conn:
         conn.execute(sql, payload)
@@ -208,7 +207,7 @@ if mode == "✏️ Edit Existing":
                     pack_format = st.text_input("Pack format", value=row.get("pack_format") or "")
                     size_format = st.text_input("Size format", value=row.get("size_format") or "")
                     insource_or_outsource = st.text_input("Insource / Outsource", value=row.get("insource_or_outsource") or "")
-                    machine_1 = st.text_input("Machine 1", value=row.get("machine_1") or "")
+                    
 
                 submitted = st.form_submit_button("Update Material")
                 if submitted:
@@ -227,7 +226,6 @@ if mode == "✏️ Edit Existing":
                         "pack_format": pack_format.strip() or None,
                         "size_format": size_format.strip() or None,
                         "insource_or_outsource": insource_or_outsource.strip() or None,
-                        "machine_1": machine_1.strip() or None,
                     }
                     try:
                         count, changed_cols = update_only_changed(row["material"], row, new_values)
@@ -272,7 +270,7 @@ elif mode == "➕ Add New":
             pack_format = st.text_input("Pack format")
             size_format = st.text_input("Size format")
             insource_or_outsource = st.text_input("Insource / Outsource")
-            machine_1 = st.text_input("Machine 1")
+            
 
         submitted = st.form_submit_button("Insert New Material")
         if submitted:
@@ -298,7 +296,6 @@ elif mode == "➕ Add New":
                         "pack_format": pack_format.strip() or None,
                         "size_format": size_format.strip() or None,
                         "insource_or_outsource": insource_or_outsource.strip() or None,
-                        "machine_1": machine_1.strip() or None,
                     }
                     try:
                         insert_row(payload)
