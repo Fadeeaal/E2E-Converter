@@ -2,3 +2,5 @@
 **/secrets.toml
 src/
 .env
+FG Master Data.xlsx
+master_data.py
