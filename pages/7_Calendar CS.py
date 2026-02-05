@@ -97,17 +97,14 @@ def upsert_calendar(df: pd.DataFrame):
 # =========================
 ensure_table()
 
-st.sidebar.subheader("⚠️ Danger Zone")
+st.sidebar.subheader("⚠️ DELETE ALL DATA")
+confirm = st.sidebar.checkbox("This will permanently delete all FG master data.")
 
-confirm = st.sidebar.checkbox("Yes, I want to delete all calendar data.")
-if st.sidebar.button("DELETE") and confirm:
-    truncate_table()
-    st.sidebar.success("Table cleared.")
-    st.rerun()
-
-# =========================
-# MAIN
-# =========================
+if confirm:
+    if st.sidebar.button("DELETE"):
+        truncate_table()
+        st.sidebar.success("Table cleared.")
+        st.rerun()
 
 st.subheader("Database Preview")
 st.dataframe(fetch_preview(50), use_container_width=True)

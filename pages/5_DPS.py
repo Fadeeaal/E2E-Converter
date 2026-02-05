@@ -606,28 +606,23 @@ def ensure_output_columns(df: pd.DataFrame) -> pd.DataFrame:
 # -------------------------
 def render_west():
     # Month inputs (unique keys because East has identical widgets)
-    c1, c2 = st.columns(2)
-    with c1:
-        region = "West"
-        st.write(f"**Region:** {region}")
-    with c2:
-        c1m, c2m, c3m = st.columns(3)
-        with c1m:
-            m0 = st.number_input(
-                "M0 Month (1-12)",
-                min_value=1,
-                max_value=12,
-                value=2,
-                step=1,
-                key="west_m0",
-            )
-        with c2m:
-            m1 = ((m0 - 1 + 1) % 12) + 1
-            st.text_input("M1", value=str(m1), disabled=True, key="west_m1")
-        with c3m:
-            m2 = ((m0 - 1 + 2) % 12) + 1
-            st.text_input("M2", value=str(m2), disabled=True, key="west_m2")
-        month_set = {int(m0), int(m1), int(m2)}
+    c1m, c2m, c3m = st.columns(3)
+    with c1m:
+        m0 = st.number_input(
+            "M0 Month (1-12)",
+            min_value=1,
+            max_value=12,
+            value=2,
+            step=1,
+            key="west_m0",
+        )
+    with c2m:
+        m1 = ((m0 - 1 + 1) % 12) + 1
+        st.text_input("M1", value=str(m1), disabled=True, key="west_m1")
+    with c3m:
+        m2 = ((m0 - 1 + 2) % 12) + 1
+        st.text_input("M2", value=str(m2), disabled=True, key="west_m2")
+    month_set = {int(m0), int(m1), int(m2)}
     st.markdown("---")
 
     uploaded = st.file_uploader("Upload Excel (.xlsx)", type=["xlsx"], key="west_upload")
@@ -748,28 +743,23 @@ def render_west():
 
 def render_east():
     # Month inputs (unique keys because West has identical widgets)
-    c1, c2 = st.columns(2)
-    with c1:
-        region = "East"
-        st.write(f"**Region:** {region}")
-    with c2:
-        c1m, c2m, c3m = st.columns(3)
-        with c1m:
-            m0 = st.number_input(
-                "M0 Month (1-12)",
-                min_value=1,
-                max_value=12,
-                value=2,
-                step=1,
-                key="east_m0",
-            )
-        with c2m:
-            m1 = ((m0 - 1 + 1) % 12) + 1
-            st.text_input("M1", value=str(m1), disabled=True, key="east_m1")
-        with c3m:
-            m2 = ((m0 - 1 + 2) % 12) + 1
-            st.text_input("M2", value=str(m2), disabled=True, key="east_m2")
-        month_set = {int(m0), int(m1), int(m2)}
+    c1m, c2m, c3m = st.columns(3)
+    with c1m:
+        m0 = st.number_input(
+            "M0 Month (1-12)",
+            min_value=1,
+            max_value=12,
+            value=2,
+            step=1,
+            key="east_m0",
+        )
+    with c2m:
+        m1 = ((m0 - 1 + 1) % 12) + 1
+        st.text_input("M1", value=str(m1), disabled=True, key="east_m1")
+    with c3m:
+        m2 = ((m0 - 1 + 2) % 12) + 1
+        st.text_input("M2", value=str(m2), disabled=True, key="east_m2")
+    month_set = {int(m0), int(m1), int(m2)}
     st.markdown("---")
 
     uploaded = st.file_uploader("Upload Excel (.xlsx)", type=["xlsx"], key="east_upload")

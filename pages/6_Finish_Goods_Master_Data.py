@@ -195,8 +195,11 @@ with tab_bulk:
                 st.success(f"Sync Done: {len(to_ins)} Inserted, {len(to_upd)} Updated.")
                 st.rerun()
 
-# Danger Zone
-st.sidebar.subheader("⚠️ Danger Zone")
-if st.sidebar.button("TRUNCATE DATA") and st.sidebar.checkbox("Confirm"):
-    with engine.begin() as conn: conn.execute(text("TRUNCATE TABLE fg_master_data"))
-    st.rerun()
+st.sidebar.subheader("⚠️ DELETE ALL DATA")
+confirm = st.sidebar.checkbox("This will permanently delete all FG master data.")
+
+if confirm:
+    if st.sidebar.button("DELETE"):
+        with engine.begin() as conn:
+            conn.execute(text("TRUNCATE TABLE fg_master_data"))
+        st.rerun()
