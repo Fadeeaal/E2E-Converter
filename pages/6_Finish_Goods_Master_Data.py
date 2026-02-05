@@ -103,9 +103,10 @@ def fetch_existing_map(keys: list) -> dict:
 # =========================
 # UI SECTION: MODE SELECTOR
 # =========================
-mode = st.radio("Select Management Mode", ["✏️ Search & Edit", "📤 Bulk Upload" ], horizontal=True)
+tabs = st.tabs(["✏️ Search & Edit", "📤 Bulk Upload"]) 
+tab_edit, tab_bulk = tabs
 
-if mode == "✏️ Search & Edit":
+with tab_edit:
     st.subheader("Manual Data Update")
     search_sku = st.text_input("Search SKU Code", placeholder="Enter SKU...").strip()
     
@@ -150,7 +151,7 @@ if mode == "✏️ Search & Edit":
                             conn.execute(upd_sql, {"d":desc,"b":brand,"sb":sub_brand,"c":category,"s":size,"p":pcs_cb,"k":kg_cb,"sp":speed,"o":output_val,"sku":search_sku,"reg":t_reg,"line":t_line})
                         st.success("Update Successful!")
                         st.rerun()
-    
+
     st.markdown("---")
     
     df_all = load_db()
@@ -162,10 +163,7 @@ if mode == "✏️ Search & Edit":
 
     st.dataframe(df_all, use_container_width=True)
 
-# =========================
-# MODE: BULK UPLOAD
-# =========================
-else:
+with tab_bulk:
     st.subheader("Bulk Sync via Excel")
     uploaded = st.file_uploader("Upload Excel (Sheet: 'Database FG')", type=["xlsx"])
     if uploaded:

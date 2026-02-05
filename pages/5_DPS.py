@@ -1,6 +1,7 @@
 import io
 import os
 import re
+
 import pandas as pd
 import streamlit as st
 from sqlalchemy import create_engine, text
@@ -8,29 +9,10 @@ from sqlalchemy import create_engine, text
 st.set_page_config(page_title="DPS Cleaner Data", layout="wide")
 st.title("DPS Cleaner Data")
 
-section = st.radio(
-    "Select Section",
-    options=["West", "East", "Combined"],
-    horizontal=True,
-    help="Choose West, East, or Combined DPS processing"
-)
 
-if section in ["West", "East"]:
-    c1, c2 = st.columns(2)
-    with c1:
-        region = section
-    with c2:
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            m0 = st.number_input("M0 Month (1-12)", min_value=1, max_value=12, value=2, step=1)
-        with c2:
-            m1 = ((m0 - 1 + 1) % 12) + 1
-            st.text_input("M1", value=str(m1), disabled=True)
-        with c3:
-            m2 = ((m0 - 1 + 2) % 12) + 1
-            st.text_input("M2", value=str(m2), disabled=True)
-        MONTH_SET = {int(m0), int(m1), int(m2)}
-    st.markdown("---")
+# -------------------------
+# Shared resources / helpers
+# -------------------------
 @st.cache_resource
 def get_engine():
     p = st.secrets["postgres"]
@@ -41,7 +23,9 @@ def get_engine():
     )
     return create_engine(url, pool_pre_ping=True)
 
+
 engine = get_engine()
+
 
 @st.cache_resource
 def load_calendar_map():
@@ -52,13 +36,16 @@ def load_calendar_map():
     df = df.dropna(subset=["cal_date", "cal_week"])
     return dict(zip(df["cal_date"], df["cal_week"]))
 
+
 @st.cache_resource
 def load_master_data_map():
     """Mengambil referensi dari fg_master_data sebagai pengganti zcorin_converter"""
-    sql = text("""
+    sql = text(
+        """
         SELECT sku_code, country, brand, sub_brand, category, big_category, house, pack_format, output, description
         FROM fg_master_data
-    """)
+    """
+    )
     with engine.connect() as conn:
         df = pd.read_sql(sql, conn)
 
@@ -66,20 +53,28 @@ def load_master_data_map():
     df = df.drop_duplicates(subset=["sku_code"])
     return df.set_index("sku_code").to_dict(orient="index")
 
+
 CAL_MAP = load_calendar_map()
 MASTER_MAP = load_master_data_map()
+
 
 def norm(x) -> str:
     return str(x).strip().lower()
 
+
 def sheet_has_line_header(excel_file, sheet_name: str, max_rows: int = 30) -> bool:
-    preview = pd.read_excel(excel_file, sheet_name=sheet_name, header=None, nrows=max_rows, engine="openpyxl")
+    preview = pd.read_excel(
+        excel_file, sheet_name=sheet_name, header=None, nrows=max_rows, engine="openpyxl"
+    )
     for r in range(len(preview)):
         vals = preview.iloc[r].tolist()
         vals = [v for v in vals if pd.notna(v)]
-        if not vals: continue
-        if "line" in [norm(v) for v in vals]: return True
+        if not vals:
+            continue
+        if "line" in [norm(v) for v in vals]:
+            return True
     return False
+
 
 def format_line_col_to_mon_yy(series: pd.Series) -> pd.Series:
     parsed = pd.to_datetime(series, errors="coerce")
@@ -88,29 +83,47 @@ def format_line_col_to_mon_yy(series: pd.Series) -> pd.Series:
     out.loc[mask] = parsed.loc[mask].dt.strftime("%b-%y")
     return out
 
+
 def calc_release_time(ts):
-    if pd.isna(ts): return pd.NaT
+    if pd.isna(ts):
+        return pd.NaT
     rt = ts + pd.Timedelta(days=5)
-    if rt.weekday() == 5: rt += pd.Timedelta(days=2)
-    elif rt.weekday() == 6: rt += pd.Timedelta(days=1)
+    if rt.weekday() == 5:
+        rt += pd.Timedelta(days=2)
+    elif rt.weekday() == 6:
+        rt += pd.Timedelta(days=1)
     return rt
+
 
 def detect_material_col(out: pd.DataFrame) -> str:
     cols = list(out.columns)
     col_map = {norm(c): c for c in cols}
-    if "material" in col_map: return col_map["material"]
-    if "sap" in col_map: return col_map["sap"]
+    if "material" in col_map:
+        return col_map["material"]
+    if "sap" in col_map:
+        return col_map["sap"]
     return cols[1] if len(cols) > 1 else cols[0]
+
 
 def enrich_from_db(out: pd.DataFrame) -> pd.DataFrame:
     """Enrichment menggunakan mapping dari fg_master_data"""
     material_col = detect_material_col(out)
     keys = out[material_col].astype(str).str.strip()
 
-    enrich_cols = ["country", "brand", "sub_brand", "category", "big_category", "house", "pack_format", "output"]
+    enrich_cols = [
+        "country",
+        "brand",
+        "sub_brand",
+        "category",
+        "big_category",
+        "house",
+        "pack_format",
+        "output",
+    ]
     for c in enrich_cols:
         out[c] = keys.map(lambda k: MASTER_MAP.get(k, {}).get(c))
     return out
+
 
 def round_FGH(out: pd.DataFrame) -> pd.DataFrame:
     """
@@ -123,13 +136,14 @@ def round_FGH(out: pd.DataFrame) -> pd.DataFrame:
             out[col] = pd.to_numeric(out[col], errors="coerce").round(0)
     return out
 
+
 def filter_by_m0_m2(out: pd.DataFrame, month_set: set) -> pd.DataFrame:
     """
     Keep rows where Time_Finish month is in M0-M2 (based on parsed datetime).
     Assumption: out includes O:P (Time Start, Time_Finish) as last two cols.
     """
     time_start_col = out.columns[-2]
-    time_finish_col = out.columns[-1]  
+    time_finish_col = out.columns[-1]
 
     out[time_start_col] = pd.to_datetime(out[time_start_col], errors="coerce")
     out[time_finish_col] = pd.to_datetime(out[time_finish_col], errors="coerce")
@@ -137,6 +151,7 @@ def filter_by_m0_m2(out: pd.DataFrame, month_set: set) -> pd.DataFrame:
     out = out.sort_values(by=time_start_col, ascending=True)
 
     return out
+
 
 def process_sheet(excel_file, sheet_name: str, month_set: set):
     if not sheet_has_line_header(excel_file, sheet_name):
@@ -163,55 +178,62 @@ def process_sheet(excel_file, sheet_name: str, month_set: set):
 
     out = enrich_from_db(out)
     # Drop 'machine_1' column if present
-    if 'machine_1' in out.columns:
-        out = out.drop(columns=['machine_1'])
+    if "machine_1" in out.columns:
+        out = out.drop(columns=["machine_1"])
 
     return out, "OK"
 
+
 def load_east_master_reference(engine) -> pd.DataFrame:
     """Mengambil semua data speed, size, dan kg_cb dari fg_master_data"""
-    sql = text("""
+    sql = text(
+        """
         SELECT sku_code, line, kg_cb, size, speed, description, 
                country, brand, sub_brand, category, big_category, house, pack_format, output
         FROM fg_master_data
-    """)
+    """
+    )
     with engine.connect() as conn:
         df = pd.read_sql(sql, conn)
-    
+
     df["sku_code"] = df["sku_code"].astype(str).str.strip()
     df["line"] = df["line"].astype(str).str.strip().str.upper()
     return df
 
+
 VALID_LINES = {"AB", "CD", "GH", "JK", "TU", "VW", "XY"}
 DATE_ROW_IDX = 8
-DATE_START_COL = 24   
-DATE_END_COL = 93     
-COL_MATERIAL = 5      
-COL_DESC = 6          
-COL_KG_CB = 9         
+DATE_START_COL = 24
+DATE_END_COL = 93
+COL_MATERIAL = 5
+COL_DESC = 6
+COL_KG_CB = 9
 COL_LINE = 10
+
 
 def load_fg_master_data(engine) -> pd.DataFrame:
     """Mengambil semua referensi (enrichment & speed) dari fg_master_data"""
-    sql = text("""
+    sql = text(
+        """
         SELECT 
             sku_code, line, description, pcs_cb, kg_cb, size, 
             country, brand, sub_brand, category, big_category, 
             house, region, speed, pack_format, output
         FROM fg_master_data
-    """)
+    """
+    )
     with engine.connect() as conn:
         df = pd.read_sql(sql, conn)
 
     # Standarisasi kolom kunci
     df["sku_code"] = df["sku_code"].astype(str).str.strip()
     df["line"] = df["line"].astype(str).str.strip().str.upper()
-    
+
     # Pastikan numerik
     df["speed"] = pd.to_numeric(df["speed"], errors="coerce")
     df["size"] = pd.to_numeric(df["size"], errors="coerce")
     df["kg_cb"] = pd.to_numeric(df["kg_cb"], errors="coerce")
-    
+
     return df
 
 
@@ -221,26 +243,36 @@ def validate_east_sheet_format(raw: pd.DataFrame) -> tuple[bool, str]:
     Returns (is_valid, error_message)
     """
     if len(raw) <= DATE_ROW_IDX:
-        return False, f"Sheet has insufficient rows. Expected at least {DATE_ROW_IDX + 1} rows."
-    
+        return (
+            False,
+            f"Sheet has insufficient rows. Expected at least {DATE_ROW_IDX + 1} rows.",
+        )
+
     if raw.shape[1] <= DATE_END_COL:
-        return False, f"Sheet has insufficient columns. Expected at least {DATE_END_COL + 1} columns."
-    
-    date_cells = raw.iloc[DATE_ROW_IDX, DATE_START_COL:DATE_END_COL + 1]
+        return (
+            False,
+            f"Sheet has insufficient columns. Expected at least {DATE_END_COL + 1} columns.",
+        )
+
+    date_cells = raw.iloc[DATE_ROW_IDX, DATE_START_COL : DATE_END_COL + 1]
     dates = pd.to_datetime(date_cells, errors="coerce")
     valid_dates = dates.notna().sum()
-    
+
     if valid_dates == 0:
         return False, "No valid date headers found in row 9 (columns Y to CP)."
-    
+
     df_items = raw.copy()
     df_items[COL_LINE] = df_items[COL_LINE].astype(str).str.strip().str.upper()
     valid_line_rows = df_items[df_items[COL_LINE].isin(VALID_LINES)]
-    
+
     if len(valid_line_rows) == 0:
-        return False, f"No rows found with valid Line values ({', '.join(sorted(VALID_LINES))})."
-    
+        return (
+            False,
+            f"No rows found with valid Line values ({', '.join(sorted(VALID_LINES))}).",
+        )
+
     return True, ""
+
 
 def process_east_file(raw: pd.DataFrame, engine, month_set: set, cal_map: dict) -> dict:
     # 1) Load single source of truth
@@ -248,9 +280,20 @@ def process_east_file(raw: pd.DataFrame, engine, month_set: set, cal_map: dict) 
 
     # keep only needed cols + de-dup for stable merge
     needed_cols = [
-        "sku_code", "line", "description", "kg_cb", "size", "speed",
-        "country", "brand", "sub_brand", "category", "big_category",
-        "house", "pack_format", "output"
+        "sku_code",
+        "line",
+        "description",
+        "kg_cb",
+        "size",
+        "speed",
+        "country",
+        "brand",
+        "sub_brand",
+        "category",
+        "big_category",
+        "house",
+        "pack_format",
+        "output",
     ]
     master_ref = master_ref[[c for c in needed_cols if c in master_ref.columns]].copy()
     master_ref["sku_code"] = master_ref["sku_code"].astype(str).str.strip()
@@ -258,10 +301,12 @@ def process_east_file(raw: pd.DataFrame, engine, month_set: set, cal_map: dict) 
     master_ref = master_ref.drop_duplicates(subset=["sku_code", "line"], keep="first")
 
     # 2) Detect valid date headers (row 9, cols Y..CP)
-    date_cells = raw.iloc[DATE_ROW_IDX, DATE_START_COL:DATE_END_COL + 1]
+    date_cells = raw.iloc[DATE_ROW_IDX, DATE_START_COL : DATE_END_COL + 1]
     dates = pd.to_datetime(date_cells, errors="coerce")
     valid_date_mask = dates.notna()
-    date_cols_idx = [DATE_START_COL + i for i, ok in enumerate(valid_date_mask.tolist()) if ok]
+    date_cols_idx = [
+        DATE_START_COL + i for i, ok in enumerate(valid_date_mask.tolist()) if ok
+    ]
     date_vals = dates[valid_date_mask].dt.date.tolist()
 
     # 3) Filter valid line rows
@@ -272,7 +317,9 @@ def process_east_file(raw: pd.DataFrame, engine, month_set: set, cal_map: dict) 
     # 4) Build wide then melt long
     keep_cols = [COL_MATERIAL, COL_DESC, COL_KG_CB, COL_LINE] + date_cols_idx
     df_wide = df_items.iloc[:, keep_cols].copy()
-    df_wide.columns = ["Material", "Description", "Kg_TU", "Line"] + [str(d) for d in date_vals]
+    df_wide.columns = ["Material", "Description", "Kg_TU", "Line"] + [
+        str(d) for d in date_vals
+    ]
 
     df_wide["Material"] = df_wide["Material"].astype(str).str.strip()
     df_wide["Description"] = df_wide["Description"].astype(str).str.strip()
@@ -280,12 +327,14 @@ def process_east_file(raw: pd.DataFrame, engine, month_set: set, cal_map: dict) 
     df_wide["Line"] = df_wide["Line"].astype(str).str.strip().str.upper()
 
     # remove blank material rows
-    df_wide = df_wide[(df_wide["Material"] != "") & (df_wide["Material"].str.lower() != "nan")].copy()
+    df_wide = df_wide[
+        (df_wide["Material"] != "") & (df_wide["Material"].str.lower() != "nan")
+    ].copy()
 
     out = df_wide.melt(
         id_vars=["Material", "Description", "Kg_TU", "Line"],
         var_name="Date",
-        value_name="Qty"
+        value_name="Qty",
     )
 
     out["Date"] = pd.to_datetime(out["Date"], errors="coerce").dt.date
@@ -296,18 +345,23 @@ def process_east_file(raw: pd.DataFrame, engine, month_set: set, cal_map: dict) 
     out["Material"] = out["Material"].astype(str).str.strip()
     out["Line"] = out["Line"].astype(str).str.strip().str.upper()
 
-    out = out.merge(
-        master_ref,
-        how="left",
-        left_on=["Material", "Line"],
-        right_on=["sku_code", "line"]
-    ).drop(columns=["sku_code", "line"], errors="ignore")
+    out = (
+        out.merge(
+            master_ref,
+            how="left",
+            left_on=["Material", "Line"],
+            right_on=["sku_code", "line"],
+        )
+        .drop(columns=["sku_code", "line"], errors="ignore")
+        .copy()
+    )
 
     # Prefer sheet description, but fill missing from master
     if "description" in out.columns:
         out["Description"] = out["Description"].where(
-            out["Description"].notna() & (out["Description"].astype(str).str.strip() != ""),
-            out["description"]
+            out["Description"].notna()
+            & (out["Description"].astype(str).str.strip() != ""),
+            out["description"],
         )
         out = out.drop(columns=["description"], errors="ignore")
 
@@ -332,8 +386,10 @@ def process_east_file(raw: pd.DataFrame, engine, month_set: set, cal_map: dict) 
 
     # avoid division by zero
     out["Prod Hour"] = out.apply(
-        lambda r: (r["Qty"] / r["Speed"]) if pd.notna(r["Speed"]) and r["Speed"] not in [0, 0.0] else None,
-        axis=1
+        lambda r: (r["Qty"] / r["Speed"])
+        if pd.notna(r["Speed"]) and r["Speed"] not in [0, 0.0]
+        else None,
+        axis=1,
     )
     out["Days"] = out["Prod Hour"].apply(lambda x: (x / 24) if pd.notna(x) else None)
 
@@ -360,7 +416,9 @@ def process_east_file(raw: pd.DataFrame, engine, month_set: set, cal_map: dict) 
 
             if last_material_prev_day is not None:
                 priority_df = day_data[day_data["Material"] == last_material_prev_day]
-                others_df = day_data[day_data["Material"] != last_material_prev_day].sort_values("Material", ascending=True)
+                others_df = day_data[day_data["Material"] != last_material_prev_day].sort_values(
+                    "Material", ascending=True
+                )
                 day_sorted = pd.concat([priority_df, others_df])
             else:
                 day_sorted = day_data.sort_values("Material", ascending=True)
@@ -374,7 +432,9 @@ def process_east_file(raw: pd.DataFrame, engine, month_set: set, cal_map: dict) 
 
         # Date to Mon-YY string for final output
         if "Date" in line_df.columns:
-            line_df["Date"] = pd.to_datetime(line_df["Date"], errors="coerce").dt.strftime("%b-%y")
+            line_df["Date"] = pd.to_datetime(line_df["Date"], errors="coerce").dt.strftime(
+                "%b-%y"
+            )
 
         time_starts = []
         time_finishes = []
@@ -410,29 +470,48 @@ def process_east_file(raw: pd.DataFrame, engine, month_set: set, cal_map: dict) 
 
         # Final selection + rename like before
         final_cols_with_time = [
-            "Date", "Material", "Description", "Pack Size", "Kg_TU", "Qty",
-            "Qty Bulk in KG", "BIN", "Time Start", "Time Finish",
-            "Release Time", "Release wk",
-            "country", "brand", "sub_brand", "category", "big_category", "house", "pack_format"
+            "Date",
+            "Material",
+            "Description",
+            "Pack Size",
+            "Kg_TU",
+            "Qty",
+            "Qty Bulk in KG",
+            "BIN",
+            "Time Start",
+            "Time Finish",
+            "Release Time",
+            "Release wk",
+            "country",
+            "brand",
+            "sub_brand",
+            "category",
+            "big_category",
+            "house",
+            "pack_format",
         ]
         line_df = line_df[[c for c in final_cols_with_time if c in line_df.columns]].copy()
 
-        line_df = line_df.rename(columns={
-            "Material": "SAP Article",
-            "Qty": "Qty (Ctn)",
-            "Qty Bulk in KG": "Qty Bulk (kg)",
-            "Release wk": "Release Week"
-        })
+        line_df = line_df.rename(
+            columns={
+                "Material": "SAP Article",
+                "Qty": "Qty (Ctn)",
+                "Qty Bulk in KG": "Qty Bulk (kg)",
+                "Release wk": "Release Week",
+            }
+        )
 
         # Drop helper
         line_df = line_df.drop(columns=["_orig_date"], errors="ignore")
 
         # Release Ident
         if "Release Time" in line_df.columns and "Release Week" in line_df.columns:
+
             def rel_ident_fmt(x):
                 if pd.notna(x):
                     return f"{x.day}{x.month}{x.year}"
                 return ""
+
             rel_ident = line_df["Release Time"].apply(rel_ident_fmt)
             idx = line_df.columns.get_loc("Release Week")
             line_df.insert(idx + 1, "Release Ident", rel_ident)
@@ -442,7 +521,15 @@ def process_east_file(raw: pd.DataFrame, engine, month_set: set, cal_map: dict) 
             line_df.insert(0, "Line", line)
 
         cols = ["Line"] + [c for c in TARGET_OUTPUT_COLS if c in line_df.columns]
-        for extra in ["country", "brand", "sub_brand", "category", "big_category", "house", "pack_format"]:
+        for extra in [
+            "country",
+            "brand",
+            "sub_brand",
+            "category",
+            "big_category",
+            "house",
+            "pack_format",
+        ]:
             if extra in line_df.columns and extra not in cols:
                 cols.append(extra)
 
@@ -450,10 +537,11 @@ def process_east_file(raw: pd.DataFrame, engine, month_set: set, cal_map: dict) 
 
     return line_dfs
 
+
 def create_east_excel_download(line_dfs: dict) -> bytes:
     """Create Excel file with separate sheets per line and return as bytes."""
     output = io.BytesIO()
-    
+
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         for line in sorted(line_dfs.keys()):
             line_df = line_dfs[line].copy()
@@ -461,7 +549,7 @@ def create_east_excel_download(line_dfs: dict) -> bytes:
             if "Line" not in line_df.columns:
                 line_df.insert(0, "Line", line)
             line_df.to_excel(writer, sheet_name=f"Line_{line}", index=False)
-        
+
         if line_dfs:
             # Concatenate and ensure 'Line' exists
             all_east_df = pd.concat(line_dfs.values(), ignore_index=True)
@@ -469,16 +557,26 @@ def create_east_excel_download(line_dfs: dict) -> bytes:
                 # Try to infer line from sheet-level keys by adding a placeholder
                 all_east_df.insert(0, "Line", None)
             all_east_df.to_excel(writer, sheet_name="All_East", index=False)
-    
+
     output.seek(0)
     return output.getvalue()
 
 
 # Desired final column order for both West and East outputs
 TARGET_OUTPUT_COLS = [
-    "Date", "SAP Article", "Description", "Pack Size", "Kg_TU",
-    "Qty (Ctn)", "Qty Bulk (kg)", "BIN", "Time Start", "Time Finish",
-    "Release Time", "Release Week", "Release Ident"
+    "Date",
+    "SAP Article",
+    "Description",
+    "Pack Size",
+    "Kg_TU",
+    "Qty (Ctn)",
+    "Qty Bulk (kg)",
+    "BIN",
+    "Time Start",
+    "Time Finish",
+    "Release Time",
+    "Release Week",
+    "Release Ident",
 ]
 
 
@@ -502,30 +600,58 @@ def ensure_output_columns(df: pd.DataFrame) -> pd.DataFrame:
             out[t] = None
     return out
 
-# Only show the main file uploader for West/East, not for Combined
-if section in ["West", "East"]:
-    uploaded = st.file_uploader("Upload Excel (.xlsx)", type=["xlsx"])
+
+# -------------------------
+# UI render functions (Tabs)
+# -------------------------
+def render_west():
+    # Month inputs (unique keys because East has identical widgets)
+    c1, c2 = st.columns(2)
+    with c1:
+        region = "West"
+        st.write(f"**Region:** {region}")
+    with c2:
+        c1m, c2m, c3m = st.columns(3)
+        with c1m:
+            m0 = st.number_input(
+                "M0 Month (1-12)",
+                min_value=1,
+                max_value=12,
+                value=2,
+                step=1,
+                key="west_m0",
+            )
+        with c2m:
+            m1 = ((m0 - 1 + 1) % 12) + 1
+            st.text_input("M1", value=str(m1), disabled=True, key="west_m1")
+        with c3m:
+            m2 = ((m0 - 1 + 2) % 12) + 1
+            st.text_input("M2", value=str(m2), disabled=True, key="west_m2")
+        month_set = {int(m0), int(m1), int(m2)}
+    st.markdown("---")
+
+    uploaded = st.file_uploader("Upload Excel (.xlsx)", type=["xlsx"], key="west_upload")
     if not uploaded:
         st.caption("Upload your file to start the process.")
-        st.stop()
+        return
 
-
-if section == "West":
     xls = pd.ExcelFile(uploaded, engine="openpyxl")
     sheet_options = xls.sheet_names
     selected_sheets = st.multiselect(
         "Pilih sheet yang ingin diproses:",
         options=sheet_options,
         default=[],
-        help="Pilih satu atau lebih sheet untuk diproses"
+        help="Pilih satu atau lebih sheet untuk diproses",
+        key="west_selected_sheets",
     )
-    if st.button("Process Selected Sheets", disabled=not selected_sheets):
+
+    if st.button("Process Selected Sheets", disabled=not selected_sheets, key="west_process_btn"):
         with st.spinner("Processing sheets..."):
             results = {}
             report = []
             for sh in selected_sheets:
                 try:
-                    df_out, status = process_sheet(uploaded, sh, MONTH_SET)
+                    df_out, status = process_sheet(uploaded, sh, month_set)
                     rows = 0 if df_out is None else len(df_out)
                     report.append((sh, status, rows))
                     if df_out is not None and not df_out.empty:
@@ -534,23 +660,27 @@ if section == "West":
                             df_out = df_out.rename(columns={"Line": "Date"})
                         region_idx = df_out.columns.get_loc("Region")
                         df_out.insert(region_idx + 1, "Line", sh)
-                        df_out = df_out.rename(columns={
-                            "Release wk": "Release Week",
-                            "Time_Finish": "Time Finish",
-                            "Release time": "Release Time"
-                        })
+                        df_out = df_out.rename(
+                            columns={
+                                "Release wk": "Release Week",
+                                "Time_Finish": "Time Finish",
+                                "Release time": "Release Time",
+                            }
+                        )
                         if "Release Time" in df_out.columns and "Release Week" in df_out.columns:
+
                             def rel_ident_fmt(x):
                                 if pd.notna(x):
                                     return f"{x.day}{x.month}{x.year}"
                                 return ""
+
                             rel_ident = df_out["Release Time"].apply(rel_ident_fmt)
                             idx = df_out.columns.get_loc("Release Week")
                             df_out.insert(idx + 1, "Release Ident", rel_ident)
+
                         # Samakan nama kolom agar konsisten di All_West
-                        df_out = df_out.rename(columns={
-                            "Qty Bulk in KG": "Qty Bulk (kg)"
-                        })
+                        df_out = df_out.rename(columns={"Qty Bulk in KG": "Qty Bulk (kg)"})
+
                         # Normalize Qty header variants (e.g., 'Qty (ctn)') -> 'Qty (Ctn)'
                         def _norm_key_local(s: str) -> str:
                             return re.sub(r"[^a-z0-9]", "", str(s or "").lower())
@@ -584,7 +714,7 @@ if section == "West":
             if not results:
                 st.error("No sheets were successfully processed (all skipped or error).")
                 st.dataframe(rep_df, use_container_width=True)
-                st.stop()
+                return
 
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine="openpyxl") as writer:
@@ -604,9 +734,7 @@ if section == "West":
 
         # Format nama file pakai singkatan bulan M0-M2
         month_names = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"]
-        m0_name = month_names[(int(m0)-1)%12]
-        m1_name = month_names[(int(m1)-1)%12]
-        m2_name = month_names[(int(m2)-1)%12]
+        m0_name = month_names[(int(m0) - 1) % 12]
         file_name = f"DPS WEST {m0_name} Output.xlsx"
 
         st.download_button(
@@ -614,10 +742,43 @@ if section == "West":
             data=output,
             file_name=file_name,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="west_download_btn",
         )
 
-elif section == "East":
+
+def render_east():
+    # Month inputs (unique keys because West has identical widgets)
+    c1, c2 = st.columns(2)
+    with c1:
+        region = "East"
+        st.write(f"**Region:** {region}")
+    with c2:
+        c1m, c2m, c3m = st.columns(3)
+        with c1m:
+            m0 = st.number_input(
+                "M0 Month (1-12)",
+                min_value=1,
+                max_value=12,
+                value=2,
+                step=1,
+                key="east_m0",
+            )
+        with c2m:
+            m1 = ((m0 - 1 + 1) % 12) + 1
+            st.text_input("M1", value=str(m1), disabled=True, key="east_m1")
+        with c3m:
+            m2 = ((m0 - 1 + 2) % 12) + 1
+            st.text_input("M2", value=str(m2), disabled=True, key="east_m2")
+        month_set = {int(m0), int(m1), int(m2)}
+    st.markdown("---")
+
+    uploaded = st.file_uploader("Upload Excel (.xlsx)", type=["xlsx"], key="east_upload")
+    if not uploaded:
+        st.caption("Upload your file to start the process.")
+        return
+
     try:
+
         @st.cache_data
         def get_sheet_names(file_bytes):
             """Cache sheet names to avoid re-reading Excel file"""
@@ -632,16 +793,22 @@ elif section == "East":
             "Pilih sheet yang ingin diproses:",
             options=sheet_names,
             default=[],
-            help="Pilih satu atau lebih sheet untuk diproses"
+            help="Pilih satu atau lebih sheet untuk diproses",
+            key="east_selected_sheets",
         )
 
-        if st.button("Process Selected Sheets", disabled=not selected_sheets):
+        if st.button("Process Selected Sheets", disabled=not selected_sheets, key="east_process_btn"):
             # Gabungkan semua hasil line dari semua sheet berdasarkan nama line
             combined_line_dfs = {}
             error_report = []
             for selected_sheet in selected_sheets:
                 with st.spinner(f"Reading sheet '{selected_sheet}'..."):
-                    raw = pd.read_excel(io.BytesIO(file_bytes), sheet_name=selected_sheet, header=None, engine="openpyxl")
+                    raw = pd.read_excel(
+                        io.BytesIO(file_bytes),
+                        sheet_name=selected_sheet,
+                        header=None,
+                        engine="openpyxl",
+                    )
                     marker = "Total SH Production"
                     cut_row = None
                     for idx, row in raw.iterrows():
@@ -657,7 +824,7 @@ elif section == "East":
                         error_report.append((selected_sheet, error_message))
                         continue
                     try:
-                        line_dfs = process_east_file(raw, engine, MONTH_SET, CAL_MAP)
+                        line_dfs = process_east_file(raw, engine, month_set, CAL_MAP)
                         if not line_dfs:
                             error_report.append((selected_sheet, "No data found after processing."))
                         else:
@@ -678,10 +845,15 @@ elif section == "East":
             if not final_line_dfs:
                 st.error("No data found in any selected sheet.")
                 if error_report:
-                    st.dataframe(pd.DataFrame(error_report, columns=["Sheet", "Error"]), use_container_width=True)
-                st.stop()
+                    st.dataframe(
+                        pd.DataFrame(error_report, columns=["Sheet", "Error"]),
+                        use_container_width=True,
+                    )
+                return
 
-            st.success(f"Done! Sheets processed: {len(final_line_dfs)} line(s) from {len(selected_sheets)} sheet(s)")
+            st.success(
+                f"Done! Sheets processed: {len(final_line_dfs)} line(s) from {len(selected_sheets)} sheet(s)"
+            )
 
             st.markdown("---")
             st.subheader("Download Output")
@@ -705,8 +877,9 @@ elif section == "East":
             st.download_button(
                 label="Download Excel File",
                 data=excel_data,
-                file_name=f"DPS East Output.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                file_name="DPS East Output.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="east_download_btn",
             )
 
             st.markdown("---")
@@ -721,20 +894,26 @@ elif section == "East":
             if error_report:
                 st.markdown("---")
                 st.subheader("Error Report")
-                st.dataframe(pd.DataFrame(error_report, columns=["Sheet", "Error"]), use_container_width=True)
+                st.dataframe(
+                    pd.DataFrame(error_report, columns=["Sheet", "Error"]),
+                    use_container_width=True,
+                )
+
     except Exception as e:
         st.error(f"Error reading file: {str(e)}")
         st.exception(e)
 
-elif section == "Combined":
+
+def render_combined():
     uploaded_files = st.file_uploader(
         "Upload 2 file Excel (.xlsx): West & East",
         type=["xlsx"],
         accept_multiple_files=True,
-        key="combined_multi"
+        key="combined_multi",
     )
     if not uploaded_files or len(uploaded_files) < 2:
-        st.stop()
+        return
+
     try:
         file_west, file_east = None, None
         for f in uploaded_files:
@@ -744,22 +923,44 @@ elif section == "Combined":
                 file_west = f
             if "all_east" in sheetnames:
                 file_east = f
+
         if not file_west or not file_east:
             st.error("Pastikan satu file mengandung sheet 'All_West' dan satu file mengandung sheet 'All_East'.")
-            st.stop()
+            return
+
         # Baca sheet
         df_west = pd.read_excel(file_west, sheet_name="All_West", header=0, engine="openpyxl")
         df_east = pd.read_excel(file_east, sheet_name="All_East", header=0, engine="openpyxl")
+
         # Target combined column order
         TARGET_COMBINED_COLS = [
-            "Region", "Line", "SAP Article", "Description", "Pack Size", "Kg_TU",
-            "Qty (Ctn)", "Qty Bulk (kg)", "BIN", "Time Start", "Time Finish",
-            "Release Time", "Release Week", "Release Ident", "Country", "Brand",
-            "Sub Brand", "Category", "Big Category", "House", "Pack Format", "Ouput"
+            "Region",
+            "Line",
+            "SAP Article",
+            "Description",
+            "Pack Size",
+            "Kg_TU",
+            "Qty (Ctn)",
+            "Qty Bulk (kg)",
+            "BIN",
+            "Time Start",
+            "Time Finish",
+            "Release Time",
+            "Release Week",
+            "Release Ident",
+            "Country",
+            "Brand",
+            "Sub Brand",
+            "Category",
+            "Big Category",
+            "House",
+            "Pack Format",
+            "Ouput",
         ]
 
         def process_combined_file(df: pd.DataFrame, region_label: str) -> pd.DataFrame:
             """Normalize columns from an All_West/All_East file and enrich from fg_master_data (MASTER_MAP)."""
+
             def norm_key(s: str) -> str:
                 s = str(s or "").lower()
                 return re.sub(r"[^a-z0-9]", "", s)
@@ -770,9 +971,18 @@ elif section == "Combined":
 
             # Core columns to take from the sheet
             sheet_fields = [
-                "Line", "SAP Article", "Description", "Pack Size", "Kg_TU",
-                "Qty (Ctn)", "Qty Bulk (kg)", "BIN", "Time Start", "Time Finish",
-                "Release Time", "Release Week"
+                "Line",
+                "SAP Article",
+                "Description",
+                "Pack Size",
+                "Kg_TU",
+                "Qty (Ctn)",
+                "Qty Bulk (kg)",
+                "BIN",
+                "Time Start",
+                "Time Finish",
+                "Release Time",
+                "Release Week",
             ]
 
             for f in sheet_fields:
@@ -786,10 +996,12 @@ elif section == "Combined":
 
             # Compute Release Ident
             if "Release Time" in out.columns:
+
                 def rel_ident_fmt(x):
                     if pd.notna(x):
                         return f"{x.day}{x.month}{x.year}"
                     return None
+
                 out["Release Ident"] = out["Release Time"].apply(rel_ident_fmt)
             else:
                 out["Release Ident"] = None
@@ -814,12 +1026,14 @@ elif section == "Combined":
 
             # (Opsional tapi membantu) kalau Description kosong, isi dari fg_master_data.description
             if "Description" in out.columns:
+
                 def fill_desc(row):
                     d = row.get("Description")
                     if pd.isna(d) or str(d).strip() == "":
                         k = str(row.get("SAP Article") or "").strip()
                         return MASTER_MAP.get(k, {}).get("description")
                     return d
+
                 out["Description"] = out.apply(fill_desc, axis=1)
 
             # Region column set from the file source
@@ -839,12 +1053,13 @@ elif section == "Combined":
 
             return final
 
-
         df_west_sel = process_combined_file(df_west, "West")
         df_east_sel = process_combined_file(df_east, "East")
         df_combined = pd.concat([df_west_sel, df_east_sel], ignore_index=True)
 
-        st.success(f"Data digabungkan: {len(df_west_sel)} baris dari West, {len(df_east_sel)} baris dari East, total {len(df_combined)} baris.")
+        st.success(
+            f"Data digabungkan: {len(df_west_sel)} baris dari West, {len(df_east_sel)} baris dari East, total {len(df_combined)} baris."
+        )
         st.markdown("---")
         st.subheader("Preview Combined Data")
         st.dataframe(df_combined, use_container_width=True, height=400)
@@ -857,9 +1072,23 @@ elif section == "Combined":
         st.download_button(
             label="Download Combined Excel",
             data=output,
-            file_name=f"DPS Total East West Output.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            file_name="DPS Total East West Output.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="combined_download_btn",
         )
+
     except Exception as e:
         st.error(f"Gagal membaca file: {str(e)}")
-        st.stop()
+        return
+
+
+# -------------------------
+# Tabs (replaces radio)
+# -------------------------
+tab_west, tab_east, tab_combined = st.tabs(["West", "East", "Combined"])
+with tab_west:
+    render_west()
+with tab_east:
+    render_east()
+with tab_combined:
+    render_combined()

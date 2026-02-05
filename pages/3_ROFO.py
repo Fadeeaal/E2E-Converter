@@ -151,14 +151,13 @@ with tab1:
                     st.download_button("📥 Download Export ROFO", output.getvalue(), f"ROFO_Export_{base_year}.xlsx")
 
 with tab2:
-    st.header("🔗 Combined Mode (PS+Exp & SS)")
-    st.info("Combined Logic: Primary Sales (PS) is merged with Export data. Secondary Sales (SS) is kept in a separate sheet.")
+    st.header("Combined File")
     
     c_up1, c_up2 = st.columns(2)
-    with c_up1: file_local = st.file_uploader("Upload Hasil Local", type=["xlsx"], key="comb_local")
-    with c_up2: file_export = st.file_uploader("Upload Hasil Export", type=["xlsx"], key="comb_export")
+    with c_up1: file_local = st.file_uploader("Local file after convert", type=["xlsx"], key="comb_local")
+    with c_up2: file_export = st.file_uploader("Export file after convert", type=["xlsx"], key="comb_export")
     
-    if st.button("🔗 Combine Data"):
+    if st.button("Combine Data"):
         if file_local and file_export:
             with st.spinner("Combining files..."):
                 # 1. Read PS_DRY and SS_DRY from the Local file
