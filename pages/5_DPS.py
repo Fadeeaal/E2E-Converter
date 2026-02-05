@@ -768,7 +768,6 @@ def render_east():
         return
 
     try:
-
         @st.cache_data
         def get_sheet_names(file_bytes):
             """Cache sheet names to avoid re-reading Excel file"""
@@ -895,27 +894,36 @@ def render_east():
 
 
 def render_combined():
-    uploaded_files = st.file_uploader(
-        "Upload 2 file Excel (.xlsx): West & East",
-        type=["xlsx"],
-        accept_multiple_files=True,
-        key="combined_multi",
-    )
-    if not uploaded_files or len(uploaded_files) < 2:
+    col1, col2 = st.columns(2)
+    with col1:
+        file_west = st.file_uploader(
+            "Upload West Excel (.xlsx) [must contain sheet 'All_West']",
+            type=["xlsx"],
+            key="combined_west",
+        )
+    with col2:
+        file_east = st.file_uploader(
+            "Upload East Excel (.xlsx) [must contain sheet 'All_East']",
+            type=["xlsx"],
+            key="combined_east",
+        )
+
+    # Tombol hanya aktif jika kedua file sudah ada
+    can_process = file_west is not None and file_east is not None
+    start = st.button("Start Processing", disabled=not can_process, key="combined_start")
+
+    if not start:
         return
 
     try:
-        file_west, file_east = None, None
-        for f in uploaded_files:
-            xls = pd.ExcelFile(f, engine="openpyxl")
-            sheetnames = [s.strip().lower() for s in xls.sheet_names]
-            if "all_west" in sheetnames:
-                file_west = f
-            if "all_east" in sheetnames:
-                file_east = f
+        # Validasi sheet All_West & All_East
+        xls_west = pd.ExcelFile(file_west, engine="openpyxl")
+        xls_east = pd.ExcelFile(file_east, engine="openpyxl")
+        sheetnames_west = [s.strip().lower() for s in xls_west.sheet_names]
+        sheetnames_east = [s.strip().lower() for s in xls_east.sheet_names]
 
-        if not file_west or not file_east:
-            st.error("Pastikan satu file mengandung sheet 'All_West' dan satu file mengandung sheet 'All_East'.")
+        if "all_west" not in sheetnames_west or "all_east" not in sheetnames_east:
+            st.error("Pastikan file West punya sheet 'All_West' dan file East punya sheet 'All_East'.")
             return
 
         # Baca sheet
@@ -1014,7 +1022,7 @@ def render_combined():
             enrich_df = pd.DataFrame(list(map(enrich_row, out["SAP Article"].fillna(""))))
             out = pd.concat([out.reset_index(drop=True), enrich_df.reset_index(drop=True)], axis=1)
 
-            # (Opsional tapi membantu) kalau Description kosong, isi dari fg_master_data.description
+            # (Opsional) isi Description kosong dari master
             if "Description" in out.columns:
 
                 def fill_desc(row):

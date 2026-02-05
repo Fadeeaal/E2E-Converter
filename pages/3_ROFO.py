@@ -127,28 +127,28 @@ with tab1:
             except: continue
         return pd.concat(all_dfs).drop_duplicates(subset=["SKU CODE"]) if all_dfs else pd.DataFrame()
 
-    if uploaded_files:
-        if st.button("🚀 Start Process"):
-            with st.spinner("Processing..."):
-                if rofo_type == "Local":
-                    ps = process_sheet_multi(uploaded_files, "PS_DRY", base_year, base_month)
-                    ss = process_sheet_multi(uploaded_files, "SS_DRY", base_year, base_month)
-                    st.success("Selesai (Local Mode)!")
-                    st.dataframe(ps, use_container_width=True)
-                    st.dataframe(ss, use_container_width=True)
-                    output = io.BytesIO()
-                    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-                        ps.to_excel(writer, sheet_name="PS_DRY", index=False)
-                        ss.to_excel(writer, sheet_name="SS_DRY", index=False)
-                    st.download_button("📥 Download Local ROFO", output.getvalue(), f"ROFO_Local_{base_year}.xlsx")
-                else:
-                    export_df = process_export_rofo(uploaded_files, base_year, base_month)
-                    st.success("Selesai (Export Mode)!")
-                    st.dataframe(export_df, use_container_width=True)
-                    output = io.BytesIO()
-                    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-                        export_df.to_excel(writer, sheet_name="ROFO_Export", index=False)
-                    st.download_button("📥 Download Export ROFO", output.getvalue(), f"ROFO_Export_{base_year}.xlsx")
+    can_process = bool(uploaded_files)
+    if st.button("🚀 Start Process", disabled=not can_process):
+        with st.spinner("Processing..."):
+            if rofo_type == "Local":
+                ps = process_sheet_multi(uploaded_files, "PS_DRY", base_year, base_month)
+                ss = process_sheet_multi(uploaded_files, "SS_DRY", base_year, base_month)
+                st.success("Selesai (Local Mode)!")
+                st.dataframe(ps, use_container_width=True)
+                st.dataframe(ss, use_container_width=True)
+                output = io.BytesIO()
+                with pd.ExcelWriter(output, engine="openpyxl") as writer:
+                    ps.to_excel(writer, sheet_name="PS_DRY", index=False)
+                    ss.to_excel(writer, sheet_name="SS_DRY", index=False)
+                st.download_button("📥 Download Local ROFO", output.getvalue(), f"ROFO_Local_{base_year}.xlsx")
+            else:
+                export_df = process_export_rofo(uploaded_files, base_year, base_month)
+                st.success("Selesai (Export Mode)!")
+                st.dataframe(export_df, use_container_width=True)
+                output = io.BytesIO()
+                with pd.ExcelWriter(output, engine="openpyxl") as writer:
+                    export_df.to_excel(writer, sheet_name="ROFO_Export", index=False)
+                st.download_button("📥 Download Export ROFO", output.getvalue(), f"ROFO_Export_{base_year}.xlsx")
 
 with tab2:
     st.header("Combined File")
@@ -157,10 +157,9 @@ with tab2:
     with c_up1: file_local = st.file_uploader("Local file after convert", type=["xlsx"], key="comb_local")
     with c_up2: file_export = st.file_uploader("Export file after convert", type=["xlsx"], key="comb_export")
     
-    if st.button("Combine Data"):
-        if file_local and file_export:
+    if file_local and file_export:
+        if st.button("Combine Data"):
             with st.spinner("Combining files..."):
-                # 1. Read PS_DRY and SS_DRY from the Local file
                 try:
                     df_local_ps = pd.read_excel(file_local, sheet_name="PS_DRY")
                     df_local_ss = pd.read_excel(file_local, sheet_name="SS_DRY")
@@ -199,5 +198,3 @@ with tab2:
                     out_comb.getvalue(), 
                     "ROFO_Combined_Final.xlsx"
                 )
-        else:
-            st.warning("Please upload both Local and Export files.")
