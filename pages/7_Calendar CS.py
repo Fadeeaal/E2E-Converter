@@ -99,8 +99,8 @@ ensure_table()
 
 st.sidebar.subheader("⚠️ Danger Zone")
 
-confirm = st.sidebar.checkbox("Yes, I want to delete all data (TRUNCATE).")
-if st.sidebar.button("TRUNCATE (clear all data)") and confirm:
+confirm = st.sidebar.checkbox("Yes, I want to delete all calendar data.")
+if st.sidebar.button("DELETE") and confirm:
     truncate_table()
     st.sidebar.success("Table cleared.")
     st.rerun()
