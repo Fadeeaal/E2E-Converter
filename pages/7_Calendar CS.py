@@ -5,9 +5,6 @@ from sqlalchemy import create_engine, text
 st.set_page_config(page_title="Calendar Loader", layout="wide")
 st.title("Calendar Loader")
 
-# =========================
-# DB CONNECTION
-# =========================
 @st.cache_resource
 def get_engine():
     p = st.secrets["postgres"]
@@ -22,9 +19,6 @@ engine = get_engine()
 
 TABLE_NAME = "calendar_cs"
 
-# =========================
-# HELPERS
-# =========================
 def ensure_table():
     sql = text(f"""
     CREATE TABLE IF NOT EXISTS {TABLE_NAME} (
@@ -55,27 +49,16 @@ def truncate_table():
 
 def load_excel(uploaded_file) -> pd.DataFrame:
     df = pd.read_excel(uploaded_file, sheet_name="Sheet1", engine="openpyxl")
-
-    # Validate columns
     needed = {"Date", "Week"}
     missing = needed - set(df.columns)
     if missing:
         raise ValueError(f"Missing columns in Excel: {sorted(list(missing))}")
 
-    # Keep only Date + Week (ignore Day)
     df = df[["Date", "Week"]].copy()
-
-    # Convert types
     df["Date"] = pd.to_datetime(df["Date"], errors="coerce").dt.date
     df["Week"] = pd.to_numeric(df["Week"], errors="coerce").astype("Int64")
-
-    # Drop invalid
     df = df[df["Date"].notna() & df["Week"].notna()].copy()
-
-    # Rename to DB columns
     df = df.rename(columns={"Date": "cal_date", "Week": "cal_week"})
-
-    # Remove duplicates inside file (keep last)
     df = df.drop_duplicates(subset=["cal_date"], keep="last")
 
     return df
@@ -92,19 +75,15 @@ def upsert_calendar(df: pd.DataFrame):
     with engine.begin() as conn:
         conn.execute(upsert_sql, df.to_dict(orient="records"))
 
-# =========================
-# INIT TABLE
-# =========================
 ensure_table()
 
 st.sidebar.subheader("⚠️ DELETE ALL DATA")
 confirm = st.sidebar.checkbox("This will permanently delete all FG master data.")
 
-if confirm:
-    if st.sidebar.button("DELETE"):
-        truncate_table()
-        st.sidebar.success("Table cleared.")
-        st.rerun()
+if confirm and st.sidebar.button("DELETE"):
+    truncate_table()
+    st.sidebar.success("Table cleared.")
+    st.rerun()
 
 st.subheader("Database Preview")
 st.dataframe(fetch_preview(50), use_container_width=True)

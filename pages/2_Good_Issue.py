@@ -10,7 +10,6 @@ st.title("Good Issue Cleaner")
 uploaded = st.file_uploader("Upload file Good Issue (.xlsx)", type=["xlsx"])
 
 if uploaded:
-    # Get sheet names
     xls = pd.ExcelFile(uploaded, engine="openpyxl")
     sheet_names = xls.sheet_names
 

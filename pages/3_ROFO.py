@@ -6,11 +6,9 @@ import datetime
 st.set_page_config(page_title="ROFO Compiler", layout="wide")
 st.title("ROFO Compiler")
 
-# --- UI TABS ---
-tab1, tab2 = st.tabs(["🔄 Converter (Local/Export)", "🔗 Combined Mode"])
+tab1, tab2 = st.tabs(["Converter (Local/Export)", "Combined Mode"])
 
 with tab1:
-    # --- UI SECTION ---
     uploaded_files = st.file_uploader(
         "Upload file SOP (.xlsx/.xlsb)",
         type=["xlsx", "xlsb"],
@@ -34,7 +32,6 @@ with tab1:
     FILTER_DISTRIBUTOR = "NATIONAL"
     FILTER_UOM = "CARTON"
 
-    # --- UTILS ---
     month_names = ["January","February","March","April","May","June","July","August","September","October","November","December"]
 
     def add_months(y, m, add):
@@ -88,7 +85,6 @@ with tab1:
         for i in range(4):
             yi, mi = add_months(b_year, b_month, i)
             m_name = month_names[mi - 1]
-            found = None
             for f in files:
                 tmp = read_filtered(f, sheet_name, yi)
                 if not tmp.empty and m_name in tmp.columns:
@@ -164,12 +160,10 @@ with tab2:
                     df_local_ps = pd.read_excel(file_local, sheet_name="PS_DRY")
                     df_local_ss = pd.read_excel(file_local, sheet_name="SS_DRY")
                 except:
-                    # Fallback if sheet names differ
                     xl = pd.ExcelFile(file_local)
                     df_local_ps = pd.read_excel(file_local, sheet_name=0)
                     df_local_ss = pd.read_excel(file_local, sheet_name=1) if len(xl.sheet_names) > 1 else pd.DataFrame()
-                
-                # 2. Read Export data
+
                 df_exp_source = pd.read_excel(file_export)
                 df_exp_sync = df_exp_source.rename(columns={
                     "Year": "YEAR", 
@@ -178,8 +172,7 @@ with tab2:
                     "Distributor": "DISTRIBUTOR",
                     "UoM": "UoM"
                 })
-                
-                # 3. Combine PS Local + Export
+
                 final_ps_export = pd.concat([df_local_ps, df_exp_sync], ignore_index=True, sort=False)
                 
                 st.success("Successfully Combined!")

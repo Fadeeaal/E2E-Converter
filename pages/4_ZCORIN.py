@@ -53,15 +53,11 @@ else:
     else:
         if st.button("Start process ZCORIN"):
             with st.spinner("Processing..."):
-                # Load data
                 df = pd.read_excel(uploaded, sheet_name="Sheet1", engine="openpyxl")
                 df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
 
                 storage_col = df.columns[1]  
                 unit_col = df.columns[12]    
-
-                # --- PERBAIKAN FILTER: Agar 1 dan 6 tertangkap dengan aman ---
-                # Ubah ke string sementara untuk pengecekan filter
                 df_temp_storage = df[storage_col].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
                 
                 mask_storage = (df_temp_storage.isin(['1', '6'])) | (df[storage_col].isna())
@@ -83,7 +79,6 @@ else:
                 df_f["_storage_sort"] = df_f[storage_col].apply(storage_sort_key)
                 df_f = df_f.sort_values("_storage_sort").drop(columns="_storage_sort")
 
-                # Kolom wajib
                 required_cols = [
                     "Material", "Unrestricted", "Blocked", "Qual. Inspection",
                     "Transfer", "Returns(Blocked)", "In Transit-Receivi",
@@ -94,15 +89,12 @@ else:
                     st.error(f"Kolom ini tidak ditemukan di file: {missing}")
                     st.stop()
 
-                # Tanggal & Konversi
                 df_f["SLED/BBD"] = parse_date_series(df_f["SLED/BBD"])
                 df_f["Manuf. Dte"] = parse_date_series(df_f["Manuf. Dte"])
                 df_f["Start Time"] = pd.to_datetime(start_time)
 
                 conv_map = load_conversion_map()
                 df_f["Conversion"] = df_f["Material"].astype(str).str.replace(r'\.0$', '', regex=True).str.strip().map(conv_map)
-
-                # Kalkulasi Visualisasi
                 df_f["Unrestricted_vis"] = df_f["Unrestricted"] / df_f["Conversion"]
                 df_f["Blocked_vis"] = df_f["Blocked"] / df_f["Conversion"]
                 df_f["Qual. Inspection_vis"] = df_f["Qual. Inspection"] / df_f["Conversion"]
@@ -122,14 +114,20 @@ else:
                 )
                 df_f["Aging (month)"] = ((df_f["Start Time"] - df_f["Manuf. Dte"]).dt.days / 30).round(2)
                 df_f["Unit_vis"] = "Ctn"
-                df_f["MRP Controller_vis"] = ""
-                df_f["Vendor Batch_vis"] = ""
+                if "MRP Controller" in df_f.columns:
+                    df_f["MRP Controller_vis"] = df_f["MRP Controller"].fillna("").astype(str)
+                else:
+                    df_f["MRP Controller_vis"] = ""
+
+                if "Vendor Batch" in df_f.columns:
+                    df_f["Vendor Batch_vis"] = df_f["Vendor Batch"].fillna("").astype(str)
+                else:
+                    df_f["Vendor Batch_vis"] = ""
+
                 df_f["Start Time"] = pd.to_datetime(df_f["Start Time"]).dt.date
 
                 df_f["SLED/BBD"] = df_f["SLED/BBD"].dt.date
                 df_f["Manuf. Dte"] = df_f["Manuf. Dte"].dt.date
-
-                # --- PERBAIKAN OUTPUT STORAGE LOCATION: Menghapus .0 dan NaN ---
                 def format_sloc(val):
                     if pd.isna(val) or str(val).strip().lower() == 'nan' or str(val).strip() == '':
                         return ""
@@ -140,7 +138,6 @@ else:
 
                 df_f[storage_col] = df_f[storage_col].apply(format_sloc)
 
-                # Clean up inf/-inf and NaN pada kolom angka
                 numeric_vis_cols = [
                     "Unrestricted_vis", "Blocked_vis", "Qual. Inspection_vis", "Transfer_vis",
                     "Returns(Blocked)_vis", "In Transit-Receivi_vis", "Total_vis",
@@ -149,7 +146,6 @@ else:
                 for col in numeric_vis_cols:
                     df_f[col] = df_f[col].replace([float('inf'), float('-inf')], pd.NA)
 
-                # Reorder columns
                 output_columns = [
                     "Plant", "Storage Location", "Material", "Material Description", "Batch", "SLED/BBD", "Manuf. Dte",
                     "Unrestricted", "Blocked", "Qual. Inspection", "Transfer", "Returns(Blocked)", "Unit", "MRP Controller", "Vendor Batch",
@@ -160,8 +156,6 @@ else:
                 ]
                 output_columns = [col for col in output_columns if col in df_f.columns]
                 df_f = df_f[output_columns]
-
-                # Export to Excel
                 base_name = os.path.splitext(uploaded.name)[0]
                 out_name = f"{base_name} Output.xlsx"
 

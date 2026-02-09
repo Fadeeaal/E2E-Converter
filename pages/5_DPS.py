@@ -742,7 +742,6 @@ def render_west():
 
 
 def render_east():
-    # Month inputs (unique keys because West has identical widgets)
     c1m, c2m, c3m = st.columns(3)
     with c1m:
         m0 = st.number_input(

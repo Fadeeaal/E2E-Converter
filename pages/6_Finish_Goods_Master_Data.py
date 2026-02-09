@@ -6,9 +6,6 @@ from sqlalchemy import create_engine, text
 st.set_page_config(page_title="FG Master Data", layout="wide")
 st.title("Finish Goods Master Data")
 
-# =========================
-# DB Engine
-# =========================
 @st.cache_resource
 def get_engine():
     p = st.secrets["postgres"]
@@ -54,9 +51,6 @@ EXCEL_ALIASES = {
     "Pack format": "Pack Format",
 }
 
-# =========================
-# Helper Functions
-# =========================
 def _norm_str(x):
     if x is None: return None
     s = str(x).strip()
@@ -100,10 +94,7 @@ def fetch_existing_map(keys: list) -> dict:
                 existing_map[(str(r["sku_code"]).strip(), str(r["region"]).strip())] = dict(r)
     return existing_map
 
-# =========================
-# UI SECTION: MODE SELECTOR
-# =========================
-tabs = st.tabs(["✏️ Search & Edit", "📤 Bulk Upload"]) 
+tabs = st.tabs(["Search & Edit Data", "Add Material Data"]) 
 tab_edit, tab_bulk = tabs
 
 with tab_edit:
@@ -159,12 +150,68 @@ with tab_edit:
     with c1:
         st.metric("Total Data", len(df_all))
     with c3:
-        st.download_button("📥 Download", data=convert_df_to_excel(df_all), file_name="FG_Master_Data_Full.xlsx")
+        st.download_button("Download", data=convert_df_to_excel(df_all), file_name="FG_Master_Data_Full.xlsx")
 
     st.dataframe(df_all, use_container_width=True)
 
 with tab_bulk:
-    st.subheader("Bulk Sync via Excel")
+    st.subheader("Single Add Material Data")
+    with st.form("single_add_form"):
+        c1, c2 = st.columns(2)
+        with c1:
+            sku_code = st.text_input("SKU Code").strip()
+            description = st.text_input("Description")
+            region = st.text_input("Region").strip().upper()
+            line = st.text_input("Line")
+            brand = st.text_input("Brand")
+            sub_brand = st.text_input("Sub Brand")
+        with c2:
+            category = st.text_input("Category")
+            size = st.text_input("Size")
+            pcs_cb = st.number_input("Pcs/CB", value=0.0)
+            kg_cb = st.number_input("KG/CB", value=0.0)
+            speed = st.number_input("Speed", value=0.0)
+            output = st.text_input("Output")
+
+        submitted = st.form_submit_button("Save Single Material")
+
+    if submitted:
+        if not sku_code or not region:
+            st.error("SKU Code dan Region wajib diisi.")
+        else:
+            single = {
+                "sku_code": sku_code,
+                "description": description,
+                "region": region,
+                "line": line,
+                "brand": brand,
+                "sub_brand": sub_brand,
+                "category": category,
+                "size": size,
+                "pcs_cb": pcs_cb,
+                "kg_cb": kg_cb,
+                "speed": speed,
+                "output": output,
+            }
+            existing_map = fetch_existing_map([(sku_code, region)])
+            with engine.begin() as conn:
+                if (sku_code, region) not in existing_map:
+                    conn.execute(text("""INSERT INTO fg_master_data
+                        (sku_code, description, region, line, brand, sub_brand, category, size, pcs_cb, kg_cb, speed, output)
+                        VALUES (:sku_code, :description, :region, :line, :brand, :sub_brand, :category, :size, :pcs_cb, :kg_cb, :speed, :output)
+                    """), single)
+                    st.success("Material berhasil ditambahkan.")
+                else:
+                    conn.execute(text("""UPDATE fg_master_data SET
+                        description=:description, line=:line, brand=:brand, sub_brand=:sub_brand, category=:category,
+                        size=:size, pcs_cb=:pcs_cb, kg_cb=:kg_cb, speed=:speed, output=:output
+                        WHERE sku_code=:sku_code AND region=:region
+                    """), single)
+                    st.success("Material berhasil di-update.")
+            st.rerun()
+
+    st.markdown("---")
+    st.subheader("Bulk Add Material Data via Excel")
     uploaded = st.file_uploader("Upload Excel (Sheet: 'Database FG')", type=["xlsx"])
     if uploaded:
         df_up = pd.read_excel(uploaded, sheet_name="Database FG")
@@ -198,8 +245,7 @@ with tab_bulk:
 st.sidebar.subheader("⚠️ DELETE ALL DATA")
 confirm = st.sidebar.checkbox("This will permanently delete all FG master data.")
 
-if confirm:
-    if st.sidebar.button("DELETE"):
-        with engine.begin() as conn:
-            conn.execute(text("TRUNCATE TABLE fg_master_data"))
-        st.rerun()
+if confirm and st.sidebar.button("DELETE"):
+    with engine.begin() as conn:
+        conn.execute(text("TRUNCATE TABLE fg_master_data"))
+    st.rerun()
