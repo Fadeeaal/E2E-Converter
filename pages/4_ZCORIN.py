@@ -5,6 +5,10 @@ import streamlit as st
 from sqlalchemy import create_engine, text
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
+from datetime import datetime
+
+def datenow_yyyymmdd():
+    return datetime.now().strftime("%Y%m%d")
 
 st.set_page_config(page_title="ZCORIN Cleaner", layout="wide")
 st.title("ZCORIN Cleaner")
@@ -173,6 +177,6 @@ else:
             st.download_button(
                 "Download Output (Excel)",
                 data=out_bytes,
-                file_name=out_name,
+                file_name=f"{datenow_yyyymmdd()}_{out_name}",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )

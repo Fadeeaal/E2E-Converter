@@ -2,6 +2,10 @@ import io
 import os
 import pandas as pd
 import streamlit as st
+from datetime import datetime
+
+def datenow_yyyymmdd():
+    return datetime.now().strftime("%Y%m%d")
 
 st.set_page_config(page_title="Good Issue Cleaner", layout="wide")
 st.title("Good Issue Cleaner")
@@ -50,7 +54,7 @@ if uploaded:
         st.download_button(
             "Download Output (Excel)",
             data=output,
-            file_name=out_name,
+            file_name=f"{datenow_yyyymmdd()}_{out_name}",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 else:

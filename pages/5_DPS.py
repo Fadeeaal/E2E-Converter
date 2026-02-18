@@ -11,6 +11,10 @@ from sqlalchemy import create_engine, text
 st.set_page_config(page_title="DPS Cleaner Data", layout="wide")
 st.title("DPS Cleaner Data")
 
+
+# -------------------------
+# Shared resources / helpers
+# -------------------------
 @st.cache_resource
 def get_engine():
     p = st.secrets["postgres"]
@@ -20,7 +24,10 @@ def get_engine():
         f"?sslmode=require"
     )
     return create_engine(url, pool_pre_ping=True)
+
+
 engine = get_engine()
+
 
 @st.cache_resource
 def load_calendar_map():
@@ -34,22 +41,37 @@ def load_calendar_map():
 
 @st.cache_resource
 def load_master_data_map():
-    sql = text("""SELECT sku_code, country, brand, sub_brand, category, big_category, house, pack_format, output, description FROM fg_master_data""")
+    """Mengambil referensi dari fg_master_data sebagai pengganti zcorin_converter"""
+    sql = text(
+        """
+        SELECT sku_code, country, brand, sub_brand, category, big_category, house, pack_format, output, description
+        FROM fg_master_data
+    """
+    )
     with engine.connect() as conn:
         df = pd.read_sql(sql, conn)
+
     df["sku_code"] = df["sku_code"].astype(str).str.strip()
     df = df.drop_duplicates(subset=["sku_code"])
     return df.set_index("sku_code").to_dict(orient="index")
 
+
 CAL_MAP = load_calendar_map()
 MASTER_MAP = load_master_data_map()
+
+
+def datenow_yyyymmdd():
+    return datetime.now().strftime("%Y%m%d")
+
 
 def norm(x) -> str:
     return str(x).strip().lower()
 
+
 def sheet_has_line_header(excel_file, sheet_name: str, max_rows: int = 30) -> bool:
     preview = pd.read_excel(
-        excel_file, sheet_name=sheet_name, header=None, nrows=max_rows, engine="openpyxl")
+        excel_file, sheet_name=sheet_name, header=None, nrows=max_rows, engine="openpyxl"
+    )
     for r in range(len(preview)):
         vals = preview.iloc[r].tolist()
         vals = [v for v in vals if pd.notna(v)]
@@ -59,12 +81,14 @@ def sheet_has_line_header(excel_file, sheet_name: str, max_rows: int = 30) -> bo
             return True
     return False
 
+
 def format_line_col_to_mon_yy(series: pd.Series) -> pd.Series:
     parsed = pd.to_datetime(series, errors="coerce")
     mask = parsed.notna()
     out = series.copy()
     out.loc[mask] = parsed.loc[mask].dt.strftime("%b-%y")
     return out
+
 
 def calc_release_time(ts):
     if pd.isna(ts):
@@ -76,6 +100,7 @@ def calc_release_time(ts):
         rt += pd.Timedelta(days=1)
     return rt
 
+
 def detect_material_col(out: pd.DataFrame) -> str:
     cols = list(out.columns)
     col_map = {norm(c): c for c in cols}
@@ -85,35 +110,63 @@ def detect_material_col(out: pd.DataFrame) -> str:
         return col_map["sap"]
     return cols[1] if len(cols) > 1 else cols[0]
 
+
 def enrich_from_db(out: pd.DataFrame) -> pd.DataFrame:
+    """Enrichment menggunakan mapping dari fg_master_data"""
     material_col = detect_material_col(out)
     keys = out[material_col].astype(str).str.strip()
 
-    enrich_cols = ["country", "brand", "sub_brand", "category", "big_category", "house", "pack_format", "output",]
+    enrich_cols = [
+        "country",
+        "brand",
+        "sub_brand",
+        "category",
+        "big_category",
+        "house",
+        "pack_format",
+        "output",
+    ]
     for c in enrich_cols:
         out[c] = keys.map(lambda k: MASTER_MAP.get(k, {}).get(c))
     return out
 
 
 def round_FGH(out: pd.DataFrame) -> pd.DataFrame:
+    """
+    Round columns F,G,H from original excel selection A:H.
+    In our selected out (A:H + O:P), FGH correspond to indices 5,6,7.
+    """
     for idx in [5, 6, 7]:
         if idx < out.shape[1]:
             col = out.columns[idx]
             out[col] = pd.to_numeric(out[col], errors="coerce").round(0)
     return out
 
-def filter_by_m0_m2(out: pd.DataFrame, month_set: set) -> pd.DataFrame:
+
+def filter_by_date_range(out: pd.DataFrame, start_date, end_date) -> pd.DataFrame:
+    """
+    Keep rows where Time Start is within [start_date, end_date] (inclusive).
+    If Time Start is NaT, keep the row.
+    Assumption: out includes O:P (Time Start, Time_Finish) as last two cols.
+    """
     time_start_col = out.columns[-2]
     time_finish_col = out.columns[-1]
+
     out[time_start_col] = pd.to_datetime(out[time_start_col], errors="coerce")
     out[time_finish_col] = pd.to_datetime(out[time_finish_col], errors="coerce")
-    out = out[out[time_finish_col].dt.month.isin(month_set)].copy()
+
+    time_start = out[time_start_col]
+    mask = time_start.isna() | time_start.dt.date.between(start_date, end_date)
+    out = out[mask].copy()
     out = out.sort_values(by=time_start_col, ascending=True)
+
     return out
 
-def process_sheet(excel_file, sheet_name: str, month_set: set):
+
+def process_sheet(excel_file, sheet_name: str, start_date, end_date):
     if not sheet_has_line_header(excel_file, sheet_name):
         return None, "SKIP (no 'Line' header found)"
+
     df = pd.read_excel(excel_file, sheet_name=sheet_name, header=0, engine="openpyxl")
     if df.shape[1] < 16:
         return None, "SKIP (not enough columns for A:H + O:P)"
@@ -124,26 +177,35 @@ def process_sheet(excel_file, sheet_name: str, month_set: set):
     line_col = out.columns[0]
     out[line_col] = format_line_col_to_mon_yy(out[line_col])
     out = round_FGH(out)
-    out = filter_by_m0_m2(out, month_set)
+    out = filter_by_date_range(out, start_date, end_date)
 
     if out.empty:
-        return None, "SKIP (no rows in selected months M0-M2)"
+        return None, "SKIP (no rows in selected date range)"
     time_finish_col = out.columns[-1]
     release_ts = out[time_finish_col].apply(calc_release_time)
     out["Release time"] = pd.to_datetime(release_ts, errors="coerce").dt.date
     out["Release wk"] = out["Release time"].map(CAL_MAP)
 
     out = enrich_from_db(out)
+    # Drop 'machine_1' column if present
     if "machine_1" in out.columns:
         out = out.drop(columns=["machine_1"])
+
     return out, "OK"
 
+
 def load_east_master_reference(engine) -> pd.DataFrame:
-    sql = text("""SELECT sku_code, line, kg_cb, size, speed, description, country, brand, sub_brand, category, big_category, house, pack_format, output
-        FROM fg_master_data"""
+    """Mengambil semua data speed, size, dan kg_cb dari fg_master_data"""
+    sql = text(
+        """
+        SELECT sku_code, line, kg_cb, size, speed, description, 
+               country, brand, sub_brand, category, big_category, house, pack_format, output
+        FROM fg_master_data
+    """
     )
     with engine.connect() as conn:
         df = pd.read_sql(sql, conn)
+
     df["sku_code"] = df["sku_code"].astype(str).str.strip()
     df["line"] = df["line"].astype(str).str.strip().str.upper()
     return df
@@ -158,85 +220,162 @@ COL_DESC = 6
 COL_KG_CB = 9
 COL_LINE = 10
 
+
 def load_fg_master_data(engine) -> pd.DataFrame:
-    sql = text("""SELECT sku_code, line, description, pcs_cb, kg_cb, size, country, brand, sub_brand, category, big_category, house, region, speed, pack_format, output
-        FROM fg_master_data"""
+    """Mengambil semua referensi (enrichment & speed) dari fg_master_data"""
+    sql = text(
+        """
+        SELECT 
+            sku_code, line, description, pcs_cb, kg_cb, size, 
+            country, brand, sub_brand, category, big_category, 
+            house, region, speed, pack_format, output
+        FROM fg_master_data
+    """
     )
     with engine.connect() as conn:
         df = pd.read_sql(sql, conn)
 
+    # Standarisasi kolom kunci
     df["sku_code"] = df["sku_code"].astype(str).str.strip()
     df["line"] = df["line"].astype(str).str.strip().str.upper()
+
+    # Pastikan numerik
     df["speed"] = pd.to_numeric(df["speed"], errors="coerce")
     df["size"] = pd.to_numeric(df["size"], errors="coerce")
     df["kg_cb"] = pd.to_numeric(df["kg_cb"], errors="coerce")
+
     return df
 
+
 def validate_east_sheet_format(raw: pd.DataFrame) -> tuple[bool, str]:
+    """
+    Validate if the sheet has the expected EAST format.
+    Returns (is_valid, error_message)
+    """
     if len(raw) <= DATE_ROW_IDX:
-        return (False, f"Sheet has insufficient rows. Expected at least {DATE_ROW_IDX + 1} rows.",)
+        return (
+            False,
+            f"Sheet has insufficient rows. Expected at least {DATE_ROW_IDX + 1} rows.",
+        )
 
     if raw.shape[1] <= DATE_END_COL:
-        return (False, f"Sheet has insufficient columns. Expected at least {DATE_END_COL + 1} columns.",)
+        return (
+            False,
+            f"Sheet has insufficient columns. Expected at least {DATE_END_COL + 1} columns.",
+        )
 
     date_cells = raw.iloc[DATE_ROW_IDX, DATE_START_COL : DATE_END_COL + 1]
     dates = pd.to_datetime(date_cells, errors="coerce")
     valid_dates = dates.notna().sum()
 
     if valid_dates == 0:
-        return (False, "No valid date headers found in row 9 (columns Y to CP).")
+        return False, "No valid date headers found in row 9 (columns Y to CP)."
 
     df_items = raw.copy()
     df_items[COL_LINE] = df_items[COL_LINE].astype(str).str.strip().str.upper()
     valid_line_rows = df_items[df_items[COL_LINE].isin(VALID_LINES)]
 
     if len(valid_line_rows) == 0:
-        return (False, f"No rows found with valid Line values ({', '.join(sorted(VALID_LINES))}).",)
+        return (
+            False,
+            f"No rows found with valid Line values ({', '.join(sorted(VALID_LINES))}).",
+        )
+
     return True, ""
 
-def process_east_file(raw: pd.DataFrame, engine, month_set: set, cal_map: dict) -> dict:
+
+def process_east_file(raw: pd.DataFrame, engine, start_date, end_date, cal_map: dict) -> dict:
+    # 1) Load single source of truth
     master_ref = load_fg_master_data(engine).copy()
-    needed_cols = ["sku_code", "line", "description", "kg_cb", "size", "speed", "country", "brand", "sub_brand", "category",
-        "big_category", "house", "pack_format", "output",]
+
+    # keep only needed cols + de-dup for stable merge
+    needed_cols = [
+        "sku_code",
+        "line",
+        "description",
+        "kg_cb",
+        "size",
+        "speed",
+        "country",
+        "brand",
+        "sub_brand",
+        "category",
+        "big_category",
+        "house",
+        "pack_format",
+        "output",
+    ]
     master_ref = master_ref[[c for c in needed_cols if c in master_ref.columns]].copy()
     master_ref["sku_code"] = master_ref["sku_code"].astype(str).str.strip()
     master_ref["line"] = master_ref["line"].astype(str).str.strip().str.upper()
     master_ref = master_ref.drop_duplicates(subset=["sku_code", "line"], keep="first")
 
+    # 2) Detect valid date headers (row 9, cols Y..CP)
     date_cells = raw.iloc[DATE_ROW_IDX, DATE_START_COL : DATE_END_COL + 1]
     dates = pd.to_datetime(date_cells, errors="coerce")
     valid_date_mask = dates.notna()
-    date_cols_idx = [DATE_START_COL + i for i, ok in enumerate(valid_date_mask.tolist()) if ok]
+    date_cols_idx = [
+        DATE_START_COL + i for i, ok in enumerate(valid_date_mask.tolist()) if ok
+    ]
     date_vals = dates[valid_date_mask].dt.date.tolist()
 
+    # 3) Filter valid line rows
     df_items = raw.copy()
     df_items[COL_LINE] = df_items[COL_LINE].astype(str).str.strip().str.upper()
     df_items = df_items[df_items[COL_LINE].isin(VALID_LINES)].copy()
 
+    # 4) Build wide then melt long
     keep_cols = [COL_MATERIAL, COL_DESC, COL_KG_CB, COL_LINE] + date_cols_idx
     df_wide = df_items.iloc[:, keep_cols].copy()
-    df_wide.columns = ["Material", "Description", "Kg_TU", "Line"] + [str(d) for d in date_vals]
+    df_wide.columns = ["Material", "Description", "Kg_TU", "Line"] + [
+        str(d) for d in date_vals
+    ]
 
     df_wide["Material"] = df_wide["Material"].astype(str).str.strip()
     df_wide["Description"] = df_wide["Description"].astype(str).str.strip()
     df_wide["Kg_TU"] = pd.to_numeric(df_wide["Kg_TU"], errors="coerce")
     df_wide["Line"] = df_wide["Line"].astype(str).str.strip().str.upper()
-    df_wide = df_wide[(df_wide["Material"] != "") & (df_wide["Material"].str.lower() != "nan")].copy()
+
+    # remove blank material rows
+    df_wide = df_wide[
+        (df_wide["Material"] != "") & (df_wide["Material"].str.lower() != "nan")
+    ].copy()
 
     out = df_wide.melt(
-        id_vars=["Material", "Description", "Kg_TU", "Line"], var_name="Date", value_name="Qty",)
+        id_vars=["Material", "Description", "Kg_TU", "Line"],
+        var_name="Date",
+        value_name="Qty",
+    )
 
     out["Date"] = pd.to_datetime(out["Date"], errors="coerce").dt.date
     out["Qty"] = pd.to_numeric(out["Qty"], errors="coerce")
     out = out[out["Qty"].fillna(0) > 0].copy()
+
+    # 5) Merge enrichment + pack size + speed ONLY from fg_master_data
     out["Material"] = out["Material"].astype(str).str.strip()
     out["Line"] = out["Line"].astype(str).str.strip().str.upper()
 
-    out = (out.merge(master_ref, how="left", left_on=["Material", "Line"], right_on=["sku_code", "line"],).drop(columns=["sku_code", "line"], errors="ignore").copy())
+    out = (
+        out.merge(
+            master_ref,
+            how="left",
+            left_on=["Material", "Line"],
+            right_on=["sku_code", "line"],
+        )
+        .drop(columns=["sku_code", "line"], errors="ignore")
+        .copy()
+    )
+
+    # Prefer sheet description, but fill missing from master
     if "description" in out.columns:
-        out["Description"] = out["Description"].where(out["Description"].notna() & (out["Description"].astype(str).str.strip() != ""), out["description"],)
+        out["Description"] = out["Description"].where(
+            out["Description"].notna()
+            & (out["Description"].astype(str).str.strip() != ""),
+            out["description"],
+        )
         out = out.drop(columns=["description"], errors="ignore")
-        
+
+    # Rename master fields to output names
     if "size" in out.columns:
         out = out.rename(columns={"size": "Pack Size"})
     else:
@@ -247,10 +386,15 @@ def process_east_file(raw: pd.DataFrame, engine, month_set: set, cal_map: dict) 
     else:
         out["Speed"] = None
 
+    # Ensure numeric for computations
     out["Kg_TU"] = pd.to_numeric(out["Kg_TU"], errors="coerce")
     out["Speed"] = pd.to_numeric(out["Speed"], errors="coerce")
+
+    # 6) Calculations
     out["Qty Bulk in KG"] = out["Qty"] * out["Kg_TU"]
     out["BIN"] = out["Qty Bulk in KG"] / 750
+
+    # avoid division by zero
     out["Prod Hour"] = out.apply(
         lambda r: (r["Qty"] / r["Speed"])
         if pd.notna(r["Speed"]) and r["Speed"] not in [0, 0.0]
@@ -258,9 +402,14 @@ def process_east_file(raw: pd.DataFrame, engine, month_set: set, cal_map: dict) 
         axis=1,
     )
     out["Days"] = out["Prod Hour"].apply(lambda x: (x / 24) if pd.notna(x) else None)
+
+    # Remove duplicates at day/material/line/kg_tu level
     key_cols = ["Date", "Material", "Line", "Kg_TU"]
     out = out.drop_duplicates(subset=key_cols, keep="first")
+
+    # 7) Build per-line schedules like your original code
     out = out.sort_values(["Date", "Line", "Material"], ascending=True)
+
     unique_lines = sorted(out["Line"].dropna().unique())
     line_dfs = {}
 
@@ -277,7 +426,9 @@ def process_east_file(raw: pd.DataFrame, engine, month_set: set, cal_map: dict) 
 
             if last_material_prev_day is not None:
                 priority_df = day_data[day_data["Material"] == last_material_prev_day]
-                others_df = day_data[day_data["Material"] != last_material_prev_day].sort_values("Material", ascending=True)
+                others_df = day_data[day_data["Material"] != last_material_prev_day].sort_values(
+                    "Material", ascending=True
+                )
                 day_sorted = pd.concat([priority_df, others_df])
             else:
                 day_sorted = day_data.sort_values("Material", ascending=True)
@@ -288,8 +439,12 @@ def process_east_file(raw: pd.DataFrame, engine, month_set: set, cal_map: dict) 
             sorted_rows.append(day_sorted)
 
         line_df = pd.concat(sorted_rows).reset_index(drop=True)
+
+        # Date to Mon-YY string for final output
         if "Date" in line_df.columns:
-            line_df["Date"] = pd.to_datetime(line_df["Date"], errors="coerce").dt.strftime("%b-%y")
+            line_df["Date"] = pd.to_datetime(line_df["Date"], errors="coerce").dt.strftime(
+                "%b-%y"
+            )
 
         time_starts = []
         time_finishes = []
@@ -305,30 +460,65 @@ def process_east_file(raw: pd.DataFrame, engine, month_set: set, cal_map: dict) 
 
             days_value = row["Days"] if pd.notna(row["Days"]) else 0
             time_finish = time_start + pd.Timedelta(days=days_value)
+
             time_starts.append(time_start)
             time_finishes.append(time_finish)
 
         line_df["Time Start"] = time_starts
         line_df["Time Finish"] = time_finishes
-        line_df = line_df[line_df["Time Finish"].dt.month.isin(month_set)].copy()
+
+        # Filter by Time Start in range (keep NaT)
+        time_start = pd.to_datetime(line_df["Time Start"], errors="coerce")
+        mask = time_start.isna() | time_start.dt.date.between(start_date, end_date)
+        line_df = line_df[mask].copy()
         if line_df.empty:
             continue
 
         line_df = line_df.sort_values("Time Start", ascending=True).reset_index(drop=True)
+
         line_df["Release Time"] = line_df["Time Finish"].apply(calc_release_time)
         line_df["Release Time"] = pd.to_datetime(line_df["Release Time"], errors="coerce").dt.date
         line_df["Release wk"] = line_df["Release Time"].map(cal_map)
-        final_cols_with_time = [ "Date", "Material", "Description", "Pack Size", "Kg_TU", "Qty", "Qty Bulk in KG", "BIN",
-                            "Time Start", "Time Finish", "Release Time", "Release wk", "country", "brand", "sub_brand", "category", 
-                            "big_category", "house", "pack_format",]
+
+        # Final selection + rename like before
+        final_cols_with_time = [
+            "Date",
+            "Material",
+            "Description",
+            "Pack Size",
+            "Kg_TU",
+            "Qty",
+            "Qty Bulk in KG",
+            "BIN",
+            "Time Start",
+            "Time Finish",
+            "Release Time",
+            "Release wk",
+            "country",
+            "brand",
+            "sub_brand",
+            "category",
+            "big_category",
+            "house",
+            "pack_format",
+        ]
         line_df = line_df[[c for c in final_cols_with_time if c in line_df.columns]].copy()
 
         line_df = line_df.rename(
-            columns={"Material": "SAP Article", "Qty": "Qty (Ctn)", "Qty Bulk in KG": "Qty Bulk (kg)", "Release wk": "Release Week",}
+            columns={
+                "Material": "SAP Article",
+                "Qty": "Qty (Ctn)",
+                "Qty Bulk in KG": "Qty Bulk (kg)",
+                "Release wk": "Release Week",
+            }
         )
 
+        # Drop helper
         line_df = line_df.drop(columns=["_orig_date"], errors="ignore")
+
+        # Release Ident
         if "Release Time" in line_df.columns and "Release Week" in line_df.columns:
+
             def rel_ident_fmt(x):
                 if pd.notna(x):
                     return f"{x.day}{x.month}{x.year}"
@@ -338,43 +528,82 @@ def process_east_file(raw: pd.DataFrame, engine, month_set: set, cal_map: dict) 
             idx = line_df.columns.get_loc("Release Week")
             line_df.insert(idx + 1, "Release Ident", rel_ident)
 
+        # Ensure 'Line' exists
         if "Line" not in line_df.columns:
             line_df.insert(0, "Line", line)
 
         cols = ["Line"] + [c for c in TARGET_OUTPUT_COLS if c in line_df.columns]
-        for extra in [ "country", "brand", "sub_brand", "category", "big_category", "house", "pack_format",]:
+        for extra in [
+            "country",
+            "brand",
+            "sub_brand",
+            "category",
+            "big_category",
+            "house",
+            "pack_format",
+        ]:
             if extra in line_df.columns and extra not in cols:
                 cols.append(extra)
+
         line_dfs[line] = line_df[cols].copy()
+
     return line_dfs
 
+
 def create_east_excel_download(line_dfs: dict) -> bytes:
+    """Create Excel file with separate sheets per line and return as bytes."""
     output = io.BytesIO()
 
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         for line in sorted(line_dfs.keys()):
             line_df = line_dfs[line].copy()
+            # Ensure a Line column exists with the line name
             if "Line" not in line_df.columns:
                 line_df.insert(0, "Line", line)
             line_df.to_excel(writer, sheet_name=f"Line_{line}", index=False)
+
         if line_dfs:
+            # Concatenate and ensure 'Line' exists
             all_east_df = pd.concat(line_dfs.values(), ignore_index=True)
             if "Line" not in all_east_df.columns:
+                # Try to infer line from sheet-level keys by adding a placeholder
                 all_east_df.insert(0, "Line", None)
             all_east_df.to_excel(writer, sheet_name="All_East", index=False)
+
     output.seek(0)
     return output.getvalue()
 
-TARGET_OUTPUT_COLS = ["Date", "SAP Article", "Description", "Pack Size", "Kg_TU", "Qty (Ctn)", "Qty Bulk (kg)", "BIN", "Time Start",
-                    "Time Finish", "Release Time", "Release Week", "Release Ident",]
+
+# Desired final column order for both West and East outputs
+TARGET_OUTPUT_COLS = [
+    "Date",
+    "SAP Article",
+    "Description",
+    "Pack Size",
+    "Kg_TU",
+    "Qty (Ctn)",
+    "Qty Bulk (kg)",
+    "BIN",
+    "Time Start",
+    "Time Finish",
+    "Release Time",
+    "Release Week",
+    "Release Ident",
+]
 
 
 def ensure_output_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Return DataFrame with columns in TARGET_OUTPUT_COLS order.
+    Case-insensitive mapping is used to find existing similar column names
+    (e.g., 'Rel Ident' -> 'Release Ident', 'Qty (ctn)' -> 'Qty (Ctn)').
+    Missing columns are created with None values.
+    """
     existing_map = {c.lower().strip(): c for c in df.columns}
     out = pd.DataFrame()
     for t in TARGET_OUTPUT_COLS:
         key = t.lower().strip()
         found = existing_map.get(key)
+        # common alias: 'rel ident' -> 'release ident'
         if not found and key == "release ident" and "rel ident" in existing_map:
             found = existing_map["rel ident"]
         if found:
@@ -383,18 +612,24 @@ def ensure_output_columns(df: pd.DataFrame) -> pd.DataFrame:
             out[t] = None
     return out
 
+
+# -------------------------
+# Sakatama processing helpers
+# -------------------------
 SAKATAMA_LINE = "A,B"
 SAKATAMA_DATE_ROW = 17
 SAKATAMA_START_COL = "JK"
 SAKATAMA_END_COL = "XK"
 SAKATAMA_EXCLUDE_LIST = ["TOTAL CB", "TOTAL PCS", "TOTAL TON"]
 
+
 def extract_sakatama_production_data(file_bytes: bytes, sheet_name: str) -> pd.DataFrame:
     wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
     if sheet_name not in wb.sheetnames:
         raise ValueError(f"Sheet '{sheet_name}' tidak ditemukan.")
     sheet = wb[sheet_name]
-    
+
+    # Deteksi area "Production" menggunakan merged cells
     prod_min_row, prod_max_row = None, None
     for merged_range in sheet.merged_cells.ranges:
         top_left_cell = sheet.cell(row=merged_range.min_row, column=merged_range.min_col)
@@ -430,33 +665,66 @@ def extract_sakatama_production_data(file_bytes: bytes, sheet_name: str) -> pd.D
             if pd.notna(qty_val) and qty_val > 0:
                 qty_round = round(float(qty_val), 0)
                 rows.append(
-                    {"Date": date_only, "Material": str(sku).strip() if sku is not None else None, "Description": str(product).strip(), "Qty": qty_round,}
+                    {
+                        "Date": date_only,
+                        "Material": str(sku).strip() if sku is not None else None,
+                        "Description": str(product).strip(),
+                        "Qty": qty_round,
+                    }
                 )
 
     if not rows:
         return pd.DataFrame()
+
     return pd.DataFrame(rows)
 
+
 def process_sakatama_file(
-    file_bytes: bytes, sheet_name: str, month_set: set, cal_map: dict) -> pd.DataFrame:
+    file_bytes: bytes, sheet_name: str, start_date, end_date, cal_map: dict
+) -> pd.DataFrame:
     out = extract_sakatama_production_data(file_bytes, sheet_name)
     if out.empty:
         return pd.DataFrame()
 
+    # Enrichment from master data (by SKU)
     master_ref = load_fg_master_data(engine).copy()
-    needed_cols = ["sku_code","description","kg_cb","size","speed","country","brand","sub_brand","category","big_category","house","pack_format","output",]
+    needed_cols = [
+        "sku_code",
+        "description",
+        "kg_cb",
+        "size",
+        "speed",
+        "country",
+        "brand",
+        "sub_brand",
+        "category",
+        "big_category",
+        "house",
+        "pack_format",
+        "output",
+    ]
     master_ref = master_ref[[c for c in needed_cols if c in master_ref.columns]].copy()
     master_ref["sku_code"] = master_ref["sku_code"].astype(str).str.strip()
     master_ref = master_ref.drop_duplicates(subset=["sku_code"], keep="first")
 
     out["Material"] = out["Material"].astype(str).str.strip()
+
     out = (
-        out.merge( master_ref, how="left", left_on="Material", right_on="sku_code",).drop(columns=["sku_code"], errors="ignore").copy()
+        out.merge(
+            master_ref,
+            how="left",
+            left_on="Material",
+            right_on="sku_code",
+        )
+        .drop(columns=["sku_code"], errors="ignore")
+        .copy()
     )
 
     if "description" in out.columns:
         out["Description"] = out["Description"].where(
-            out["Description"].notna() & (out["Description"].astype(str).str.strip() != ""),out["description"],)
+            out["Description"].notna() & (out["Description"].astype(str).str.strip() != ""),
+            out["description"],
+        )
         out = out.drop(columns=["description"], errors="ignore")
 
     if "size" in out.columns:
@@ -477,8 +745,11 @@ def process_sakatama_file(
     out["Qty"] = pd.to_numeric(out["Qty"], errors="coerce").round(0)
     out["Kg_TU"] = pd.to_numeric(out["Kg_TU"], errors="coerce")
     out["Speed"] = pd.to_numeric(out["Speed"], errors="coerce")
+
+    # Calculations
     out["Qty Bulk in KG"] = (out["Qty"] * out["Kg_TU"]).round(0)
     out["BIN"] = (out["Qty Bulk in KG"] / 750).round(0)
+
     out["Prod Hour"] = out.apply(
         lambda r: (r["Qty"] / r["Speed"])
         if pd.notna(r["Speed"]) and r["Speed"] not in [0, 0.0]
@@ -486,8 +757,12 @@ def process_sakatama_file(
         axis=1,
     )
     out["Days"] = out["Prod Hour"].apply(lambda x: (x / 24) if pd.notna(x) else None)
+
+    # Remove duplicates at day/material/kg_tu level
     key_cols = ["Date", "Material", "Kg_TU"]
     out = out.drop_duplicates(subset=key_cols, keep="first")
+
+    # Sorting + scheduling like East (single line)
     out = out.sort_values(["Date", "Material"], ascending=True).copy()
     out["_orig_date"] = pd.to_datetime(out["Date"], errors="coerce")
 
@@ -513,6 +788,8 @@ def process_sakatama_file(
         sorted_rows.append(day_sorted)
 
     out = pd.concat(sorted_rows).reset_index(drop=True)
+
+    # Time calculations
     time_starts = []
     time_finishes = []
 
@@ -533,21 +810,34 @@ def process_sakatama_file(
 
     out["Time Start"] = time_starts
     out["Time Finish"] = time_finishes
-    out = out[out["Time Finish"].dt.month.isin(month_set)].copy()
+
+    # Filter by Time Start in range (keep NaT)
+    time_start = pd.to_datetime(out["Time Start"], errors="coerce")
+    mask = time_start.isna() | time_start.dt.date.between(start_date, end_date)
+    out = out[mask].copy()
     if out.empty:
         return pd.DataFrame()
+
     out = out.sort_values("Time Start", ascending=True).reset_index(drop=True)
 
     out["Release Time"] = out["Time Finish"].apply(calc_release_time)
     out["Release Time"] = pd.to_datetime(out["Release Time"], errors="coerce").dt.date
     out["Release wk"] = out["Release Time"].map(cal_map)
+
+    # Date to Mon-YY string for final output
     out["Date"] = pd.to_datetime(out["Date"], errors="coerce").dt.strftime("%b-%y")
 
     out = out.rename(
-        columns={"Material": "SAP Article","Qty": "Qty (Ctn)","Qty Bulk in KG": "Qty Bulk (kg)","Release wk": "Release Week",}
+        columns={
+            "Material": "SAP Article",
+            "Qty": "Qty (Ctn)",
+            "Qty Bulk in KG": "Qty Bulk (kg)",
+            "Release wk": "Release Week",
+        }
     )
 
     if "Release Time" in out.columns and "Release Week" in out.columns:
+
         def rel_ident_fmt(x):
             if pd.notna(x):
                 return f"{x.day}{x.month}{x.year}"
@@ -556,8 +846,11 @@ def process_sakatama_file(
         rel_ident = out["Release Time"].apply(rel_ident_fmt)
         idx = out.columns.get_loc("Release Week")
         out.insert(idx + 1, "Release Ident", rel_ident)
+
+    # Ensure Line column exists
     out.insert(0, "Line", SAKATAMA_LINE)
 
+    # Final selection of columns
     final_cols_with_time = [
         "Line",
         "Date",
@@ -594,24 +887,29 @@ def create_sakatama_excel_download(df: pd.DataFrame) -> bytes:
     output.seek(0)
     return output.getvalue()
 
+
+# -------------------------
+# UI render functions (Tabs)
+# -------------------------
 def render_west():
-    c1m, c2m, c3m = st.columns(3)
-    with c1m:
-        m0 = st.number_input(
-            "M0 Month (1-12)",
-            min_value=1,
-            max_value=12,
-            value=2,
-            step=1,
-            key="west_m0",
+    c1d, c2d = st.columns(2)
+    with c1d:
+        start_date = st.date_input(
+            "Start Date",
+            value=datetime.today().date(),
+            key="west_start_date",
         )
-    with c2m:
-        m1 = ((m0 - 1 + 1) % 12) + 1
-        st.text_input("M1", value=str(m1), disabled=True, key="west_m1")
-    with c3m:
-        m2 = ((m0 - 1 + 2) % 12) + 1
-        st.text_input("M2", value=str(m2), disabled=True, key="west_m2")
-    month_set = {int(m0), int(m1), int(m2)}
+    with c2d:
+        end_date = st.date_input(
+            "End Date",
+            value=datetime.today().date(),
+            key="west_end_date",
+        )
+
+    if end_date < start_date:
+        st.error("End Date harus lebih besar atau sama dengan Start Date.")
+        return
+
     st.markdown("---")
 
     uploaded = st.file_uploader("Upload Excel (.xlsx)", type=["xlsx"], key="west_upload")
@@ -635,12 +933,12 @@ def render_west():
             report = []
             for sh in selected_sheets:
                 try:
-                    df_out, status = process_sheet(uploaded, sh, month_set)
+                    df_out, status = process_sheet(uploaded, sh, start_date, end_date)
                     rows = 0 if df_out is None else len(df_out)
                     report.append((sh, status, rows))
                     if df_out is not None and not df_out.empty:
                         df_out.insert(0, "Region", "West")
-                        if "Line" in df_out.columns:    
+                        if "Line" in df_out.columns:
                             df_out = df_out.rename(columns={"Line": "Date"})
                         region_idx = df_out.columns.get_loc("Region")
                         df_out.insert(region_idx + 1, "Line", sh)
@@ -662,8 +960,10 @@ def render_west():
                             idx = df_out.columns.get_loc("Release Week")
                             df_out.insert(idx + 1, "Release Ident", rel_ident)
 
+                        # Samakan nama kolom agar konsisten di All_West
                         df_out = df_out.rename(columns={"Qty Bulk in KG": "Qty Bulk (kg)"})
 
+                        # Normalize Qty header variants (e.g., 'Qty (ctn)') -> 'Qty (Ctn)'
                         def _norm_key_local(s: str) -> str:
                             return re.sub(r"[^a-z0-9]", "", str(s or "").lower())
 
@@ -673,6 +973,29 @@ def render_west():
                             if orig != "Qty (Ctn)":
                                 df_out = df_out.rename(columns={orig: "Qty (Ctn)"})
 
+                        # Ensure article column exists and is named exactly 'SAP Article'
+                        article_col = None
+                        candidates = ["sap article", "sap_article", "sap", "material", "sku", "sku_code", "article"]
+                        for c in df_out.columns:
+                            lname = str(c).lower().strip()
+                            for cand in candidates:
+                                if cand in lname:
+                                    article_col = c
+                                    break
+                            if article_col:
+                                break
+
+                        if article_col is not None:
+                            # rename to canonical column name
+                            if article_col != "SAP Article":
+                                df_out = df_out.rename(columns={article_col: "SAP Article"})
+                            s = df_out["SAP Article"]
+                            mask_valid = s.notna() & (s.astype(str).str.strip() != "") & (
+                                s.astype(str).str.lower().str.strip() != "none"
+                            )
+                            df_out = df_out[mask_valid].copy()
+
+                        # Remove enrichment columns for West outputs (keep them only in Combined)
                         for _c in [
                             "country",
                             "brand",
@@ -713,10 +1036,8 @@ def render_west():
             with st.expander(f"📄 {sh} ({len(df_out)} rows)", expanded=False):
                 st.dataframe(df_out, use_container_width=True)
 
-        # Format nama file pakai singkatan bulan M0-M2
-        month_names = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"]
-        m0_name = month_names[(int(m0) - 1) % 12]
-        file_name = f"DPS WEST {m0_name} Output.xlsx"
+        date_prefix = datenow_yyyymmdd()
+        file_name = f"{date_prefix}_DPS West.xlsx"
 
         st.download_button(
             "Download Output (Excel)",
@@ -728,23 +1049,24 @@ def render_west():
 
 
 def render_east():
-    c1m, c2m, c3m = st.columns(3)
-    with c1m:
-        m0 = st.number_input(
-            "M0 Month (1-12)",
-            min_value=1,
-            max_value=12,
-            value=2,
-            step=1,
-            key="east_m0",
+    c1d, c2d = st.columns(2)
+    with c1d:
+        start_date = st.date_input(
+            "Start Date",
+            value=datetime.today().date(),
+            key="east_start_date",
         )
-    with c2m:
-        m1 = ((m0 - 1 + 1) % 12) + 1
-        st.text_input("M1", value=str(m1), disabled=True, key="east_m1")
-    with c3m:
-        m2 = ((m0 - 1 + 2) % 12) + 1
-        st.text_input("M2", value=str(m2), disabled=True, key="east_m2")
-    month_set = {int(m0), int(m1), int(m2)}
+    with c2d:
+        end_date = st.date_input(
+            "End Date",
+            value=datetime.today().date(),
+            key="east_end_date",
+        )
+
+    if end_date < start_date:
+        st.error("End Date harus lebih besar atau sama dengan Start Date.")
+        return
+
     st.markdown("---")
 
     uploaded = st.file_uploader("Upload Excel (.xlsx)", type=["xlsx"], key="east_upload")
@@ -798,7 +1120,7 @@ def render_east():
                         error_report.append((selected_sheet, error_message))
                         continue
                     try:
-                        line_dfs = process_east_file(raw, engine, month_set, CAL_MAP)
+                        line_dfs = process_east_file(raw, engine, start_date, end_date, CAL_MAP)
                         if not line_dfs:
                             error_report.append((selected_sheet, "No data found after processing."))
                         else:
@@ -831,6 +1153,7 @@ def render_east():
 
             st.markdown("---")
             st.subheader("Download Output")
+            # Remove enrichment columns for East outputs (they are used only in Combined)
             for lk, ldf in list(final_line_dfs.items()):
                 for _c in [
                     "country",
@@ -847,10 +1170,12 @@ def render_east():
                 final_line_dfs[lk] = ldf
 
             excel_data = create_east_excel_download(final_line_dfs)
+            date_prefix = datenow_yyyymmdd()
+            file_name = f"{date_prefix}_DPS East.xlsx"
             st.download_button(
                 label="Download Excel File",
                 data=excel_data,
-                file_name="DPS East Output.xlsx",
+                file_name=file_name,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 key="east_download_btn",
             )
@@ -878,23 +1203,24 @@ def render_east():
 
 
 def render_sakatama():
-    c1m, c2m, c3m = st.columns(3)
-    with c1m:
-        m0 = st.number_input(
-            "M0 Month (1-12)",
-            min_value=1,
-            max_value=12,
-            value=2,
-            step=1,
-            key="sakatama_m0",
+    c1d, c2d = st.columns(2)
+    with c1d:
+        start_date = st.date_input(
+            "Start Date",
+            value=datetime.today().date(),
+            key="sakatama_start_date",
         )
-    with c2m:
-        m1 = ((m0 - 1 + 1) % 12) + 1
-        st.text_input("M1", value=str(m1), disabled=True, key="sakatama_m1")
-    with c3m:
-        m2 = ((m0 - 1 + 2) % 12) + 1
-        st.text_input("M2", value=str(m2), disabled=True, key="sakatama_m2")
-    month_set = {int(m0), int(m1), int(m2)}
+    with c2d:
+        end_date = st.date_input(
+            "End Date",
+            value=datetime.today().date(),
+            key="sakatama_end_date",
+        )
+
+    if end_date < start_date:
+        st.error("End Date harus lebih besar atau sama dengan Start Date.")
+        return
+
     st.markdown("---")
 
     uploaded = st.file_uploader("Upload Excel (.xlsx)", type=["xlsx"], key="sakatama_upload")
@@ -929,7 +1255,7 @@ def render_sakatama():
             for selected_sheet in selected_sheets:
                 with st.spinner(f"Reading & processing '{selected_sheet}'..."):
                     try:
-                        df = process_sakatama_file(file_bytes, selected_sheet, month_set, CAL_MAP)
+                        df = process_sakatama_file(file_bytes, selected_sheet, start_date, end_date, CAL_MAP)
                         if df is None or df.empty:
                             error_report.append((selected_sheet, "No data found after processing."))
                         else:
@@ -968,10 +1294,12 @@ def render_sakatama():
                     final_df = final_df.drop(columns=[_c])
 
             excel_data = create_sakatama_excel_download(final_df)
+            date_prefix = datenow_yyyymmdd()
+            file_name = f"{date_prefix}_DPS Sakatama.xlsx"
             st.download_button(
                 label="Download Excel File",
                 data=excel_data,
-                file_name="DPS Sakatama Output.xlsx",
+                file_name=file_name,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 key="sakatama_download_btn",
             )
@@ -1018,6 +1346,7 @@ def render_combined():
             key="combined_sakatama",
         )
 
+    # Tombol hanya aktif jika kedua file sudah ada
     can_process = file_west is not None and file_east is not None and file_sakatama is not None
     start = st.button("Start Processing", disabled=not can_process, key="combined_start")
 
@@ -1025,6 +1354,7 @@ def render_combined():
         return
 
     try:
+        # Validasi sheet All_West & All_East
         xls_west = pd.ExcelFile(file_west, engine="openpyxl")
         xls_east = pd.ExcelFile(file_east, engine="openpyxl")
         xls_sakatama = pd.ExcelFile(file_sakatama, engine="openpyxl")
@@ -1186,10 +1516,12 @@ def render_combined():
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
             df_combined.to_excel(writer, sheet_name="Combined_DPS", index=False)
         output.seek(0)
+        date_prefix = datenow_yyyymmdd()
+        file_name = f"{date_prefix}_DPS Combined.xlsx"
         st.download_button(
             label="Download Combined Excel",
             data=output,
-            file_name="DPS Total East West Output.xlsx",
+            file_name=file_name,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             key="combined_download_btn",
         )
@@ -1198,10 +1530,6 @@ def render_combined():
         st.error(f"Gagal membaca file: {str(e)}")
         return
 
-
-# -------------------------
-# Tabs (replaces radio)
-# -------------------------
 tab_west, tab_east, tab_sakatama, tab_combined = st.tabs(["West", "East", "Sakatama", "Combined"])
 with tab_west:
     render_west()

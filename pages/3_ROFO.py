@@ -1,7 +1,10 @@
 import io
 import pandas as pd
 import streamlit as st
-import datetime
+from datetime import datetime
+
+def datenow_yyyymmdd():
+    return datetime.now().strftime("%Y%m%d")
 
 st.set_page_config(page_title="ROFO Compiler", layout="wide")
 st.title("ROFO Compiler")
@@ -136,7 +139,7 @@ with tab1:
                 with pd.ExcelWriter(output, engine="openpyxl") as writer:
                     ps.to_excel(writer, sheet_name="PS_DRY", index=False)
                     ss.to_excel(writer, sheet_name="SS_DRY", index=False)
-                st.download_button("📥 Download Local ROFO", output.getvalue(), f"ROFO_Local_{base_year}.xlsx")
+                st.download_button("📥 Download Local ROFO", output.getvalue(), f"{datenow_yyyymmdd()}_ROFO Local {base_year}.xlsx")
             else:
                 export_df = process_export_rofo(uploaded_files, base_year, base_month)
                 st.success("Selesai (Export Mode)!")
@@ -144,7 +147,7 @@ with tab1:
                 output = io.BytesIO()
                 with pd.ExcelWriter(output, engine="openpyxl") as writer:
                     export_df.to_excel(writer, sheet_name="ROFO_Export", index=False)
-                st.download_button("📥 Download Export ROFO", output.getvalue(), f"ROFO_Export_{base_year}.xlsx")
+                st.download_button("📥 Download Export ROFO", output.getvalue(), f"{datenow_yyyymmdd()}_ROFO Export {base_year}.xlsx")
 
 with tab2:
     st.header("Combined File")
@@ -189,5 +192,5 @@ with tab2:
                 st.download_button(
                     "📥 Download Combined ROFO", 
                     out_comb.getvalue(), 
-                    "ROFO_Combined_Final.xlsx"
+                    f"{datenow_yyyymmdd()}_ROFO Combined.xlsx"
                 )
