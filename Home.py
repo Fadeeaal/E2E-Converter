@@ -1,7 +1,7 @@
 import streamlit as st
 
 st.set_page_config(
-    page_title="E2E Supply Chain Dashboard",
+    page_title="E2E Supply Chain Converter",
     page_icon="📊",
     layout="wide"
 )
@@ -9,7 +9,7 @@ st.set_page_config(
 # =========================
 # HEADER
 # =========================
-st.title("📊 E2E Supply Chain Dashboard")
+st.title("📊 E2E Supply Chain Converter")
 st.caption(
     "Centralized hub for data cleansing, consolidation, and operational tools "
     "across end-to-end Supply Chain processes."
@@ -22,9 +22,9 @@ st.markdown("---")
 # =========================
 st.markdown(
     """
-    Welcome to the **E2E Dashboard** 👋  
+    Welcome to the **E2E Supply Chain Converter** 👋  
 
-    This dashboard is designed to streamline Supply Chain operations through 
+    This converter is designed to streamline Supply Chain operations through 
     **automated data cleansing**, **database conversion**, and **planning consolidation**.
 
     👉 Please select a feature from the **sidebar on the left** to get started.
@@ -53,7 +53,7 @@ with c2:
     )
 
 with c3:
-    st.subheader("📈 ROFO Tool")
+    st.subheader("📈 ROFO")
     st.write(
         "Multi-file ROFO compiler (Local & Export) featuring M0–M3 logic, "
         "Primary Sales consolidation, and automated Excel exports."
@@ -67,7 +67,7 @@ st.markdown("")
 c4, c5 = st.columns(2)
 
 with c4:
-    st.subheader("🧹 ZCORIN Tool")
+    st.subheader("🧹 Opening Stock (ZCORIN)")
     st.write(
         "A unified solution for ZCORIN data: Cleaner (data transformation, "
         "shelf life, and release time) and Converter (Master Data management "
@@ -75,7 +75,7 @@ with c4:
     )
 
 with c5:
-    st.subheader("📊 DPS Tool")
+    st.subheader("📊 DPS MPS")
     st.write(
         "DPS data converter for Local and Export modes, including automated "
         "Primary Sales merging for centralized demand planning consolidation."
