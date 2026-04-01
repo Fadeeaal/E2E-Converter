@@ -49,9 +49,9 @@ if uploaded_file:
                 
                 # Scan baris di atas header untuk mencari teks periode
                 for r_search in range(max(0, start_row-5), start_row):
-                    row_period = df_raw.iloc[r_search].astype(str).tolist()
+                    row_period = df_raw.iloc[r_search].tolist()
                     for c_idx, cell_val in enumerate(row_period):
-                        if target_period.lower() in cell_val.lower():
+                        if pd.notna(cell_val) and target_period.lower() in str(cell_val).lower():
                             row_headers = df_raw.iloc[start_row].astype(str).tolist()
                             # Cari kolom target di area periode tersebut
                             for c_search in range(c_idx, len(row_headers)):
