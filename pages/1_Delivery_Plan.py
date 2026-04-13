@@ -20,7 +20,7 @@ if uploaded:
             uploaded,
             sheet_name=sheet,
             header=4,
-            usecols="B:D,BG:BK",
+            usecols="B:E,BG:BK",
             engine="openpyxl"
         )
         
