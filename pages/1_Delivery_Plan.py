@@ -29,8 +29,11 @@ if uploaded:
         if "Description" in df.columns:
             df = df[df["Description"].notna()].copy()
             df["Description"] = df["Description"].astype(str).str.strip()
+        if "SP" in df.columns:
+            df = df[df["SP"].notna()].copy()
+            df["SP"] = df["SP"].astype(str).str.strip()
 
-        non_numeric_cols = {"Demand Code", "Description"}
+        non_numeric_cols = {"Demand Code", "Description", "SP"}
         numeric_cols = [c for c in df.columns if c not in non_numeric_cols]
 
         for c in numeric_cols:
