@@ -84,7 +84,7 @@ if uploaded:
 
         output = io.BytesIO()
         base_name = os.path.splitext(uploaded.name)[0]
-        out_name = f"{base_name} Output.xlsx"
+        out_name = f"{base_name}.xlsx"
 
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
             df_raw.to_excel(writer, index=False, sheet_name="RAW")
