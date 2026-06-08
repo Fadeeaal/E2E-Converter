@@ -76,15 +76,19 @@ if uploaded:
         st.markdown("---")
 
         st.subheader("Preview Output")
-        st.dataframe(result, use_container_width=True)
+        tab_raw, tab_acc = st.tabs(["RAW", "ACCUMULATED"])
+        with tab_raw:
+            st.dataframe(df_raw, use_container_width=True)
+        with tab_acc:
+            st.dataframe(result, use_container_width=True)
 
         output = io.BytesIO()
         base_name = os.path.splitext(uploaded.name)[0]
         out_name = f"{base_name} Output.xlsx"
 
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            result.to_excel(writer, index=False, sheet_name="ACCUMULATED")
             df_raw.to_excel(writer, index=False, sheet_name="RAW")
+            result.to_excel(writer, index=False, sheet_name="ACCUMULATED")
         output.seek(0)
 
         st.download_button(
