@@ -71,6 +71,7 @@ if uploaded:
                 (df_raw[raw_q_col] >= pd.Timestamp(start_date)) &
                 (df_raw[raw_q_col] <= pd.Timestamp(end_date))
             ].reset_index(drop=True)
+            df_raw[raw_q_col] = df_raw[raw_q_col].dt.strftime("%d/%m/%Y")
 
         st.markdown("---")
 
