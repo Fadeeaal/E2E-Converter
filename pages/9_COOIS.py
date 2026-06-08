@@ -61,6 +61,17 @@ if uploaded:
 
             result[q_col] = result[q_col].dt.strftime("%d/%m/%Y")
 
+            # Sheet RAW: semua kolom dari source, filter H=="TR" dan range tanggal
+            df_raw = pd.read_excel(uploaded, sheet_name=selected_sheet, engine="openpyxl")
+            raw_h_col = df_raw.columns[7]   # kolom H (0-indexed)
+            raw_q_col = df_raw.columns[16]  # kolom Q (0-indexed)
+            df_raw = df_raw[df_raw[raw_h_col] == "TR"]
+            df_raw[raw_q_col] = pd.to_datetime(df_raw[raw_q_col], errors="coerce")
+            df_raw = df_raw[
+                (df_raw[raw_q_col] >= pd.Timestamp(start_date)) &
+                (df_raw[raw_q_col] <= pd.Timestamp(end_date))
+            ].reset_index(drop=True)
+
         st.markdown("---")
 
         st.subheader("Preview Output")
@@ -71,7 +82,8 @@ if uploaded:
         out_name = f"{base_name} Output.xlsx"
 
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            result.to_excel(writer, index=False, sheet_name="vis")
+            result.to_excel(writer, index=False, sheet_name="ACCUMULATED")
+            df_raw.to_excel(writer, index=False, sheet_name="RAW")
         output.seek(0)
 
         st.download_button(
