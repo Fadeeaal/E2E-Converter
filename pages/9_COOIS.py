@@ -33,11 +33,11 @@ if uploaded:
             df = pd.read_excel(
                 uploaded,
                 sheet_name=selected_sheet,
-                usecols=[2, 3, 5, 7, 16],  # C, D, F, H, Q
+                usecols=[2, 3, 7, 9, 16],  # C, D, H, J, Q
                 engine="openpyxl"
             )
 
-            h_col = df.columns[3]  # H adalah indeks ke-3 (C=0, D=1, F=2, H=3, Q=4)
+            h_col = df.columns[2]  # H adalah indeks ke-2 (C=0, D=1, H=2, J=3, Q=4)
             df = df[df[h_col] == "TR"]
             df = df.drop(columns=[h_col]).reset_index(drop=True)
             # Setelah drop H: C=col[0], D=col[1], F=col[2], Q=col[3]
