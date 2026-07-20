@@ -77,6 +77,7 @@ def convert_df_to_excel(df: pd.DataFrame) -> bytes:
     return output.getvalue()
 
 def fetch_existing_map(keys: list) -> dict:
+    """keys: list of (sku_code, region, line) tuples"""
     existing_map = {}
     if not keys: return existing_map
     keys = list(set(keys))
@@ -84,14 +85,14 @@ def fetch_existing_map(keys: list) -> dict:
     with engine.connect() as conn:
         for i in range(0, len(keys), chunk_size):
             chunk = keys[i:i + chunk_size]
-            values_sql = ", ".join([f"(:s{j}, :r{j})" for j in range(len(chunk))])
+            values_sql = ", ".join([f"(:s{j}, :r{j}, :l{j})" for j in range(len(chunk))])
             params = {}
-            for j, (sku, reg) in enumerate(chunk):
-                params[f"s{j}"], params[f"r{j}"] = sku, reg
-            sql = text(f"SELECT * FROM fg_master_data WHERE (sku_code, region) IN ({values_sql})")
+            for j, (sku, reg, line) in enumerate(chunk):
+                params[f"s{j}"], params[f"r{j}"], params[f"l{j}"] = sku, reg, line
+            sql = text(f"SELECT * FROM fg_master_data WHERE (sku_code, region, line) IN ({values_sql})")
             rows = conn.execute(sql, params).mappings().all()
             for r in rows:
-                existing_map[(str(r["sku_code"]).strip(), str(r["region"]).strip())] = dict(r)
+                existing_map[(str(r["sku_code"]).strip(), str(r["region"]).strip(), str(r["line"]).strip())] = dict(r)
     return existing_map
 
 tabs = st.tabs(["Search & Edit Data", "Add Material Data"]) 
@@ -222,23 +223,23 @@ with tab_bulk:
             with st.spinner("Analyzing..."):
                 df_up['sku_code'] = df_up['sku_code'].astype(str).str.strip()
                 df_up['region'] = df_up['region'].astype(str).str.strip().str.upper()
+                df_up['line'] = df_up['line'].astype(str).str.strip()
 
-                # --- FIX: buang duplikat sku_code+region DALAM file excel sebelum diproses ---
-                dup_mask = df_up.duplicated(subset=['sku_code', 'region'], keep=False)
+                # buang duplikat SEJATI: sama persis sku_code + region + line
+                dup_mask = df_up.duplicated(subset=['sku_code', 'region', 'line'], keep=False)
                 n_dupes = dup_mask.sum()
                 if n_dupes > 0:
-                    st.warning(f"⚠️ Ditemukan {n_dupes} baris duplikat (SKU+Region sama) di file Excel. "
-                            f"Hanya baris terakhir per kombinasi yang akan dipakai.")
-                    st.dataframe(df_up[dup_mask].sort_values(['sku_code', 'region']))
+                    st.warning(f"⚠️ {n_dupes} baris punya kombinasi SKU+Region+Line identik. "
+                            f"Baris terakhir yang dipakai.")
+                    st.dataframe(df_up[dup_mask].sort_values(['sku_code', 'region', 'line']))
+                df_up = df_up.drop_duplicates(subset=['sku_code', 'region', 'line'], keep='last')
 
-                df_up = df_up.drop_duplicates(subset=['sku_code', 'region'], keep='last')
-                # -------------------------------------------------------------------------
-
-                existing_map = fetch_existing_map(list(zip(df_up['sku_code'], df_up['region'])))
+                keys = list(zip(df_up['sku_code'], df_up['region'], df_up['line']))
+                existing_map = fetch_existing_map(keys)
 
                 to_ins, to_upd = [], []
                 for _, row in df_up.iterrows():
-                    key = (row['sku_code'], row['region'])
+                    key = (row['sku_code'], row['region'], row['line'])
                     d = row.to_dict()
                     if key not in existing_map: to_ins.append(d)
                     else: to_upd.append(d)
@@ -248,9 +249,10 @@ with tab_bulk:
                         conn.execute(text("""INSERT INTO fg_master_data (sku_code, description, region, line, brand, sub_brand, category, size, pcs_cb, kg_cb, speed, output) 
                                             VALUES (:sku_code, :description, :region, :line, :brand, :sub_brand, :category, :size, :pcs_cb, :kg_cb, :speed, :output)"""), to_ins)
                     if to_upd:
-                        conn.execute(text("""UPDATE fg_master_data SET description=:description, line=:line, brand=:brand, sub_brand=:sub_brand, category=:category, 
+                        # line TIDAK di-SET lagi karena dia bagian dari key WHERE
+                        conn.execute(text("""UPDATE fg_master_data SET description=:description, brand=:brand, sub_brand=:sub_brand, category=:category, 
                                             size=:size, pcs_cb=:pcs_cb, kg_cb=:kg_cb, speed=:speed, output=:output
-                                            WHERE sku_code=:sku_code AND region=:region"""), to_upd)
+                                            WHERE sku_code=:sku_code AND region=:region AND line=:line"""), to_upd)
                 st.success(f"Sync Done: {len(to_ins)} Inserted, {len(to_upd)} Updated.")
                 st.rerun()
 
