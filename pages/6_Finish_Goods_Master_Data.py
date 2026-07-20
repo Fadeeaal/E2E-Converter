@@ -222,23 +222,35 @@ with tab_bulk:
             with st.spinner("Analyzing..."):
                 df_up['sku_code'] = df_up['sku_code'].astype(str).str.strip()
                 df_up['region'] = df_up['region'].astype(str).str.strip().str.upper()
+
+                # --- FIX: buang duplikat sku_code+region DALAM file excel sebelum diproses ---
+                dup_mask = df_up.duplicated(subset=['sku_code', 'region'], keep=False)
+                n_dupes = dup_mask.sum()
+                if n_dupes > 0:
+                    st.warning(f"⚠️ Ditemukan {n_dupes} baris duplikat (SKU+Region sama) di file Excel. "
+                            f"Hanya baris terakhir per kombinasi yang akan dipakai.")
+                    st.dataframe(df_up[dup_mask].sort_values(['sku_code', 'region']))
+
+                df_up = df_up.drop_duplicates(subset=['sku_code', 'region'], keep='last')
+                # -------------------------------------------------------------------------
+
                 existing_map = fetch_existing_map(list(zip(df_up['sku_code'], df_up['region'])))
-                
+
                 to_ins, to_upd = [], []
                 for _, row in df_up.iterrows():
                     key = (row['sku_code'], row['region'])
                     d = row.to_dict()
                     if key not in existing_map: to_ins.append(d)
                     else: to_upd.append(d)
-                
+
                 with engine.begin() as conn:
                     if to_ins:
                         conn.execute(text("""INSERT INTO fg_master_data (sku_code, description, region, line, brand, sub_brand, category, size, pcs_cb, kg_cb, speed, output) 
-                                             VALUES (:sku_code, :description, :region, :line, :brand, :sub_brand, :category, :size, :pcs_cb, :kg_cb, :speed, :output)"""), to_ins)
+                                            VALUES (:sku_code, :description, :region, :line, :brand, :sub_brand, :category, :size, :pcs_cb, :kg_cb, :speed, :output)"""), to_ins)
                     if to_upd:
                         conn.execute(text("""UPDATE fg_master_data SET description=:description, line=:line, brand=:brand, sub_brand=:sub_brand, category=:category, 
-                                             size=:size, pcs_cb=:pcs_cb, kg_cb=:kg_cb, speed=:speed, output=:output
-                                             WHERE sku_code=:sku_code AND region=:region"""), to_upd)
+                                            size=:size, pcs_cb=:pcs_cb, kg_cb=:kg_cb, speed=:speed, output=:output
+                                            WHERE sku_code=:sku_code AND region=:region"""), to_upd)
                 st.success(f"Sync Done: {len(to_ins)} Inserted, {len(to_upd)} Updated.")
                 st.rerun()
 
