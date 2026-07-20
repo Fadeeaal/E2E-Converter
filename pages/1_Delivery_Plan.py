@@ -9,7 +9,8 @@ def datenow_yyyymmdd():
 st.set_page_config(page_title="Delivery Plan Cleaner", layout="wide")
 st.title("Delivery Plan Cleaner")
 
-uploaded = st.file_uploader("Upload file Excel (.xlsx)", type=["xlsx"])
+uploaded = st.file_uploader("Upload file Excel (.xlsx)", type=
+                            ["xlsx"])
 
 if uploaded:
     xls = pd.ExcelFile(uploaded, engine="openpyxl")
