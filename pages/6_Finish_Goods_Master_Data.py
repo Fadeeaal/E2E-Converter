@@ -81,18 +81,24 @@ def fetch_existing_map(keys: list) -> dict:
     existing_map = {}
     if not keys: return existing_map
     keys = list(set(keys))
-    chunk_size = 500  # turunkan sedikit karena tiap key = 3 param + OR clause
+    chunk_size = 1000
     with engine.connect() as conn:
         for i in range(0, len(keys), chunk_size):
             chunk = keys[i:i + chunk_size]
-            conditions = " OR ".join([
-                f"(sku_code = :s{j} AND region = :r{j} AND line = :l{j})"
-                for j in range(len(chunk))
-            ])
+            values_rows = ", ".join(
+                [f"(:s{j}::text, :r{j}::text, :l{j}::text)" for j in range(len(chunk))]
+            )
             params = {}
             for j, (sku, reg, line) in enumerate(chunk):
                 params[f"s{j}"], params[f"r{j}"], params[f"l{j}"] = sku, reg, line
-            sql = text(f"SELECT * FROM fg_master_data WHERE {conditions}")
+            sql = text(f"""
+                SELECT t.*
+                FROM fg_master_data t
+                JOIN (VALUES {values_rows}) AS v(sku_code, region, line)
+                  ON t.sku_code = v.sku_code
+                 AND t.region   = v.region
+                 AND t.line     = v.line
+            """)
             rows = conn.execute(sql, params).mappings().all()
             for r in rows:
                 existing_map[(str(r["sku_code"]).strip(), str(r["region"]).strip(), str(r["line"]).strip())] = dict(r)
