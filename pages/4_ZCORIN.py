@@ -26,14 +26,14 @@ def get_engine():
 engine = get_engine()
 
 def load_conversion_map():
-    """material -> pcs_cb (numeric)"""
-    sql = text("SELECT material, pcs_cb FROM zcorin_converter")
+    """sku_code -> pcs_cb (numeric)"""
+    sql = text("SELECT sku_code, pcs_cb FROM fg_master_data")
     with engine.connect() as conn:
         df = pd.read_sql(sql, conn)
 
-    df["material"] = df["material"].astype(str).str.strip()
+    df["sku_code"] = df["sku_code"].astype(str).str.strip()
     df["pcs_cb"] = pd.to_numeric(df["pcs_cb"], errors="coerce")
-    return dict(zip(df["material"], df["pcs_cb"]))
+    return dict(zip(df["sku_code"], df["pcs_cb"]))
 
 def parse_date_series(s: pd.Series) -> pd.Series:
     """
